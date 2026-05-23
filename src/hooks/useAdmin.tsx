@@ -6,43 +6,47 @@ import { supabase } from '@/integrations/supabase/client';
 export const useAdmin = (userId?: string) => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
 
-  const checkAdmin = useCallback(async () => {
-    if (!userId) {
-      setIsAdmin(false);
+  useEffect(() => {
+    const checkAdmin = async () => {
+      if (!userId) {
+        setIsAdmin(false);
+        setVerifiedUserId(null);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .eq('role', 'admin')
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error checking admin role:', error);
+      }
+
+      setIsAdmin(!!data);
+      setVerifiedUserId(userId);
       setLoading(false);
-      return;
-    }
+    };
 
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .eq('role', 'admin')
-      .maybeSingle();
+    checkAdmin();
 
-    if (error) {
-      console.error('Error checking admin role:', error);
-    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      checkAdmin();
+    });
 
-    setIsAdmin(!!data);
-    setLoading(false);
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [userId]);
 
-  useEffect(() => {
-    checkAdmin();
-  }, [checkAdmin]);
+  // It is loading if we are fetching, or if we have a userId but haven't verified it yet
+  const isLoading = loading || (!!userId && verifiedUserId !== userId);
 
-  // Also re-check when auth state changes
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      if (userId) {
-        checkAdmin();
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, [userId, checkAdmin]);
-
-  return { isAdmin, loading };
+  return { isAdmin, loading: isLoading };
 };

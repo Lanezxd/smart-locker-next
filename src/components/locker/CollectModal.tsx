@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, KeyRound, CheckCircle, AlertCircle, ShieldQuestion, MessageSquare, Loader2, Send } from "lucide-react";
@@ -66,22 +66,27 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     setError('');
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('verify-answer', {
-        body: {
+      const response = await fetch('/api/verify-answer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           userAnswer: userAnswer.trim(),
           correctAnswer: locker.securityQuestion.answer,
           question: locker.securityQuestion.question
-        }
+        })
       });
 
-      if (fnError) {
-        throw fnError;
+      if (!response.ok) {
+        throw new Error('Failed to verify answer');
       }
 
+      const data = await response.json();
       console.log('Verification result:', data);
       setVerificationResult(data);
 
-      if (data.isMatch && data.confidence >= 60) {
+      if (data.isMatch) {
         // Answer is correct - generate OTP
         const newOTP = generateOTP();
         setGeneratedOTP(newOTP);

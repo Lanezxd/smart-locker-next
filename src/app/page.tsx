@@ -2444,17 +2444,20 @@ function SmartLockerContent() {
     setAiMessage(null);
 
     try {
-      const { data, error } = await supabase.functions.invoke('verify-answer', {
-        body: {
+      const response = await fetch('/api/verify-answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           userAnswer: verifyAnswer.trim(),
           correctAnswer: selectedLocker.item.answer,
           question: selectedLocker.item.question
-        }
+        })
       });
 
-      if (error) throw error;
+      if (!response.ok) throw new Error('Failed to verify answer');
+      const data = await response.json();
 
-      if (data.isMatch && data.confidence >= 60) {
+      if (data.isMatch) {
         const generatedOtp = Math.floor(100000 + Math.random() * 900000);
         setLockers(lockers.map(l => 
           l.id === selectedLocker.id && l.item
