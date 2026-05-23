@@ -28,7 +28,9 @@ export const useLikes = (postId: string, userId?: string) => {
   useEffect(() => { fetchLikes(); }, [fetchLikes]);
 
   useEffect(() => {
-    const channel = supabase.channel(`likes-${postId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'likes', filter: `post_id=eq.${postId}` }, () => { fetchLikes(); }).subscribe();
+    const channel = supabase.channel(`likes-${postId}-${Date.now()}-${Math.random()}`);
+    channel.on('postgres_changes', { event: '*', schema: 'public', table: 'likes', filter: `post_id=eq.${postId}` }, () => { fetchLikes(); });
+    channel.subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [postId, fetchLikes]);
 

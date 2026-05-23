@@ -171,26 +171,25 @@ export const useChat = (currentUserId: string | undefined) => {
     // Mark as read when opening a room
     markRoomAsRead(activeRoomId);
 
-    const channel = supabase
-      .channel(`chat-messages-${activeRoomId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chat_messages',
-          filter: `room_id=eq.${activeRoomId}`,
-        },
-        (payload) => {
-          const newMsg = payload.new as ChatMessageDB;
-          setMessages((prev) => [...prev, newMsg]);
-          // Auto-mark as read since user is viewing this room
-          if (currentUserId && newMsg.sender_id !== currentUserId) {
-            markRoomAsRead(activeRoomId);
-          }
+    const channel = supabase.channel(`chat-messages-${activeRoomId}-${Date.now()}-${Math.random()}`);
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_messages',
+        filter: `room_id=eq.${activeRoomId}`,
+      },
+      (payload) => {
+        const newMsg = payload.new as ChatMessageDB;
+        setMessages((prev) => [...prev, newMsg]);
+        // Auto-mark as read since user is viewing this room
+        if (currentUserId && newMsg.sender_id !== currentUserId) {
+          markRoomAsRead(activeRoomId);
         }
-      )
-      .subscribe();
+      }
+    );
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);
@@ -203,20 +202,19 @@ export const useChat = (currentUserId: string | undefined) => {
 
     fetchRooms();
 
-    const channel = supabase
-      .channel('chat-rooms-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'chat_rooms',
-        },
-        () => {
-          fetchRooms();
-        }
-      )
-      .subscribe();
+    const channel = supabase.channel(`chat-rooms-realtime-${Date.now()}-${Math.random()}`);
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'chat_rooms',
+      },
+      () => {
+        fetchRooms();
+      }
+    );
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);
@@ -232,32 +230,31 @@ export const useChat = (currentUserId: string | undefined) => {
   useEffect(() => {
     if (!currentUserId) return;
 
-    const channel = supabase
-      .channel('chat-unread-global')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chat_messages',
-        },
-        (payload) => {
-          const msg = payload.new as ChatMessageDB;
-          // If message is not from current user and not in the active room, increment unread
-          if (msg.sender_id !== currentUserId) {
-            if (msg.room_id === activeRoomId) {
-              // Already viewing this room, mark as read
-              markRoomAsRead(msg.room_id);
-            } else {
-              setUnreadCounts(prev => ({
-                ...prev,
-                [msg.room_id]: (prev[msg.room_id] || 0) + 1
-              }));
-            }
+    const channel = supabase.channel(`chat-unread-global-${Date.now()}-${Math.random()}`);
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_messages',
+      },
+      (payload) => {
+        const msg = payload.new as ChatMessageDB;
+        // If message is not from current user and not in the active room, increment unread
+        if (msg.sender_id !== currentUserId) {
+          if (msg.room_id === activeRoomId) {
+            // Already viewing this room, mark as read
+            markRoomAsRead(msg.room_id);
+          } else {
+            setUnreadCounts(prev => ({
+              ...prev,
+              [msg.room_id]: (prev[msg.room_id] || 0) + 1
+            }));
           }
         }
-      )
-      .subscribe();
+      }
+    );
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);

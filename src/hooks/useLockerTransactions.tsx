@@ -54,20 +54,21 @@ export const useLockerTransactions = () => {
     fetchTransactions();
 
     // Set up realtime subscription with a unique channel name to prevent double-subscription errors in React Strict Mode
-    const channel = supabase
-      .channel(`locker-transactions-realtime-${Math.random()}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'locker_transactions'
-        },
-        () => {
-          fetchTransactions();
-        }
-      )
-      .subscribe();
+    const channel = supabase.channel(`locker-transactions-${Date.now()}-${Math.random()}`);
+    
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'locker_transactions'
+      },
+      () => {
+        fetchTransactions();
+      }
+    );
+    
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);

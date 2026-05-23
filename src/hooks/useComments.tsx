@@ -41,7 +41,9 @@ export const useComments = (postId: string) => {
   useEffect(() => {
     if (postId) {
       fetchComments();
-      const channel = supabase.channel(`comments-${postId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}` }, () => { fetchComments(); }).subscribe();
+      const channel = supabase.channel(`comments-${postId}-${Date.now()}-${Math.random()}`);
+      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}` }, () => { fetchComments(); });
+      channel.subscribe();
       return () => { supabase.removeChannel(channel); };
     }
   }, [postId, fetchComments]);
