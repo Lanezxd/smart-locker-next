@@ -1,0 +1,20 @@
+$dirs = @(
+    'c:\Users\USER\Project\smart-locker-next\src\components\locker',
+    'c:\Users\USER\Project\smart-locker-next\src\components\dashboard',
+    'c:\Users\USER\Project\smart-locker-next\src\components\feed'
+)
+
+foreach ($dir in $dirs) {
+    $files = Get-ChildItem -Path $dir -Filter '*.tsx'
+    foreach ($f in $files) {
+        $content = Get-Content $f.FullName -Raw -Encoding UTF8
+        if ($content -notmatch "^'use client'") {
+            $newContent = "'use client';" + [Environment]::NewLine + $content
+            Set-Content -Path $f.FullName -Value $newContent -Encoding UTF8
+            Write-Host "Patched: $($f.Name)"
+        } else {
+            Write-Host "Already has use client: $($f.Name)"
+        }
+    }
+}
+Write-Host "All done."
