@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, Send, Shield, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -18,6 +18,18 @@ interface AdminMessage {
 
 const ContactAdminPage = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const from = searchParams?.get('from');
+  
+  const handleBack = () => {
+    if (from === 'inbox') {
+      router.push('/?view=chat_list');
+    } else if (from === 'profile') {
+      router.push('/profile');
+    } else {
+      router.back();
+    }
+  };
   const { user, loading: authLoading } = useAuth();
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -97,7 +109,7 @@ const ContactAdminPage = () => {
     <div className="min-h-screen bg-background flex flex-col">
       <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-xl border-b border-border">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => router.push('/profile')} className="p-2 hover:bg-secondary rounded-full transition-colors">
+          <button onClick={handleBack} className="p-2 hover:bg-secondary rounded-full transition-colors">
             <ChevronLeft className="w-5 h-5 text-foreground" />
           </button>
           <div className="flex items-center gap-2">

@@ -1398,7 +1398,7 @@ const ChatView = ({
     <div className="flex flex-col h-screen bg-background">
       {/* Chat Header */}
       <div className="flex items-center gap-4 px-4 py-3 border-b border-border bg-card">
-        <button onClick={() => setView(isDepositor ? 'chat_list' : 'verify')} className="text-muted-foreground hover:text-foreground">
+        <button onClick={() => setView('chat_list')} className="text-muted-foreground hover:text-foreground">
           <ChevronLeft className="w-6 h-6" />
         </button>
         <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
@@ -2111,7 +2111,7 @@ const ChatListView = ({
         {/* Admin Chat Entry - only for non-admin users */}
         {!isAdmin && (
           <button
-            onClick={() => router.push('/contact-admin')}
+            onClick={() => router.push('/contact-admin?from=inbox')}
             className="w-full bg-card p-4 rounded-2xl shadow-sm border border-border hover:shadow-md transition-all cursor-pointer flex gap-4 items-center group text-left"
           >
             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary to-warning flex items-center justify-center">
@@ -2198,6 +2198,7 @@ function SmartLockerContent() {
   const [adminUnreadCount, setAdminUnreadCount] = useState(0);
   const [chatIsDepositor, setChatIsDepositor] = useState(false);
   const [view, setView] = useState<ViewType>(() => {
+    if (searchParams?.get('view') === 'chat_list') return 'chat_list';
     return (pathname.includes('/contact-admin') || searchParams?.get('chat') === 'true') ? 'chat' : 'home';
   });
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);

@@ -20,20 +20,9 @@ export interface ChatMessageDB {
   content: string;
   message_type: string; // 'text' | 'otp_sent'
   created_at: string;
+  is_read?: boolean;
 }
 
-// Helper to get/set last read timestamp per room from localStorage
-const getLastReadKey = (userId: string, roomId: string) => `chat_read_${userId}_${roomId}`;
-
-const getLastReadTime = (userId: string, roomId: string): string | null => {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(getLastReadKey(userId, roomId));
-};
-
-const setLastReadTime = (userId: string, roomId: string) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(getLastReadKey(userId, roomId), new Date().toISOString());
-};
 
 export const useChat = (currentUserId: string | undefined) => {
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
@@ -55,18 +44,13 @@ export const useChat = (currentUserId: string | undefined) => {
     const counts: { [roomId: string]: number } = {};
 
     for (const room of rooms) {
-      const lastRead = getLastReadTime(currentUserId, room.id);
-      let query = supabase
+      const { count } = await supabase
         .from('chat_messages')
         .select('id', { count: 'exact', head: true })
         .eq('room_id', room.id)
-        .neq('sender_id', currentUserId);
+        .neq('sender_id', currentUserId)
+        .or('is_read.eq.false,is_read.is.null');
 
-      if (lastRead) {
-        query = query.gt('created_at', lastRead);
-      }
-
-      const { count } = await query;
       counts[room.id] = count || 0;
     }
 
@@ -74,10 +58,33 @@ export const useChat = (currentUserId: string | undefined) => {
   }, [currentUserId, rooms]);
 
   // Mark a room as read
-  const markRoomAsRead = useCallback((roomId: string) => {
-    if (!currentUserId) return;
-    setLastReadTime(currentUserId, roomId);
+  const markRoomAsRead = useCallback(async (roomId: string) => {
+    if (!currentUserId || !roomId) {
+      console.warn('markRoomAsRead aborted: Missing currentUserId or roomId', { currentUserId, roomId });
+      return;
+    }
+    
+    // Update local state immediately for snappy UI
     setUnreadCounts(prev => ({ ...prev, [roomId]: 0 }));
+    
+    console.log('Attempting to mark read with payload:', { roomId, currentUserId });
+
+    // Update database
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .update({ is_read: true })
+      .eq('room_id', roomId)
+      .neq('sender_id', currentUserId)
+      .or('is_read.eq.false,is_read.is.null')
+      .select();
+      
+    if (error) {
+      console.error('Error marking messages as read:', error);
+    } else if (data && data.length === 0) {
+      console.log('markRoomAsRead: 0 rows updated (messages were likely already read).');
+    } else {
+      console.log(`Successfully marked ${data?.length} messages as read.`);
+    }
   }, [currentUserId]);
 
   // Fetch all chat rooms for the current user
