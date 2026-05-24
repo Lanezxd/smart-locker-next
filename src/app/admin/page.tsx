@@ -92,11 +92,12 @@ const AdminDashboardPage = () => {
   const fetchData = () => { fetchReports(); fetchTransactions(); fetchChatUsers(); };
 
   const fetchReports = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    const { data, error } = await supabase.functions.invoke('admin-get-reports', {
-      headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
-    });
-    if (!error && !data?.error) setReports((data?.reports ?? []) as Report[]);
+    const { data, error } = await supabase
+      .from('reports')
+      .select('*, post:posts(id, title, content, user_id, image_url)')
+      .order('created_at', { ascending: false });
+    
+    if (!error && data) setReports(data as Report[]);
   };
 
   const fetchTransactions = async () => {
