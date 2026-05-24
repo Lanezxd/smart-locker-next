@@ -12,12 +12,12 @@ export const StickyActionBar = ({
 }: StickyActionBarProps) => {
   return (
     <>
-      {/* Spacer to prevent content overlap - Adjusted for responsive taller header */}
-      <div className="h-[120px] sm:h-[97px]" />
+      {/* Spacer precisely matches the height of the fixed Action Bar so the feed starts right below it */}
+      <div className="h-[75px] sm:h-[88px] w-full" />
       
-      {/* Fixed Action Bar */}
-      <div className="fixed top-[110px] sm:top-[97px] left-0 right-0 z-40 bg-background/98 backdrop-blur-md border-y border-border shadow-sm transition-all">
-        <div className="max-w-2xl mx-auto px-3 sm:px-4 py-3 sm:py-4 w-full">
+      {/* Fixed Action Bar - perfectly positioned to attach below FeedHeader without overlap */}
+      <div className="fixed top-[169px] sm:top-[117px] left-0 right-0 z-40 bg-background/98 backdrop-blur-md border-b border-border shadow-sm transition-all flex w-full">
+        <div className="max-w-2xl mx-auto px-3 sm:px-4 py-4 sm:py-5 w-full">
           <div className="flex flex-row gap-2 sm:gap-3 items-center justify-center w-full">
             {/* Found Item (Deposit) */}
             <button
