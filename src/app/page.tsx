@@ -50,7 +50,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdmin } from '@/hooks/useAdmin';
 import { useLockerTransactions } from '@/hooks/useLockerTransactions';
-import { useChat, ChatRoom, ChatMessageDB } from '@/hooks/useChat';
+import { ChatRoom, ChatMessageDB } from '@/hooks/useChat';
+import { useChatContext } from '@/contexts/ChatContext';
 
 // Types
 interface LockerItem {
@@ -1315,6 +1316,7 @@ const ChatView = ({
   sendMessage,
   currentUserId,
   isDepositor,
+  clearActiveRoom,
 }: {
   setView: (view: ViewType) => void;
   selectedLocker: Locker | null;
@@ -1326,6 +1328,7 @@ const ChatView = ({
   sendMessage: (roomId: string, content: string, messageType?: string) => Promise<ChatMessageDB | null>;
   currentUserId: string | undefined;
   isDepositor: boolean;
+  clearActiveRoom: () => void;
 }) => {
   const otherUserName = isDepositor 
     ? 'ผู้มารับของ' 
@@ -2192,7 +2195,7 @@ function SmartLockerContent() {
   const { user, profile, loading: authLoading } = useAuth();
   const { isAdmin } = useAdmin(user?.id);
   const { createDeposit, markAsCollected } = useLockerTransactions();
-  const { rooms: chatRooms, messages: chatMessages, activeRoomId, setActiveRoomId, getOrCreateRoom, sendMessage, totalUnread, markRoomAsRead } = useChat(user?.id);
+  const { rooms: chatRooms, messages: chatMessages, activeRoomId, setActiveRoomId, clearActiveRoom, getOrCreateRoom, sendMessage, totalUnread, markRoomAsRead } = useChatContext();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [adminUnreadCount, setAdminUnreadCount] = useState(0);
@@ -2219,6 +2222,13 @@ function SmartLockerContent() {
     question: '',
     answer: ''
   });
+
+  // Clear active room when leaving chat view
+  useEffect(() => {
+    if (view !== 'chat') {
+      clearActiveRoom();
+    }
+  }, [view, clearActiveRoom]);
 
   // Sync lockers with database transactions
   useEffect(() => {
@@ -2555,6 +2565,7 @@ function SmartLockerContent() {
         sendMessage={sendMessage}
         currentUserId={user?.id}
         isDepositor={chatIsDepositor}
+        clearActiveRoom={clearActiveRoom}
       />
     );
   }

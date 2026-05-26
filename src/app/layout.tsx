@@ -13,7 +13,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="th" suppressHydrationWarning>
+    <html lang="th" suppressHydrationWarning data-scroll-behavior="smooth">
       <body className="min-h-screen flex flex-col antialiased max-w-full overflow-x-hidden">
         <Providers>
           <main className="flex-1">

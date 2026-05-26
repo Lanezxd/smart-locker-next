@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -27,9 +27,23 @@ export interface ChatMessageDB {
 export const useChat = (currentUserId: string | undefined) => {
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [messages, setMessages] = useState<ChatMessageDB[]>([]);
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [activeRoomIdState, setActiveRoomIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState<{ [roomId: string]: number }>({});
+  
+  const activeRoomIdRef = useRef<string | null>(null);
+
+  const setActiveRoomId = useCallback((roomId: string | null) => {
+    activeRoomIdRef.current = roomId;
+    setActiveRoomIdState(roomId);
+  }, []);
+
+  const clearActiveRoom = useCallback(() => {
+    activeRoomIdRef.current = null;
+    setActiveRoomIdState(null);
+  }, []);
+
+  const activeRoomId = activeRoomIdState;
 
   // Calculate total unread count
   const totalUnread = Object.values(unreadCounts).reduce((sum, c) => sum + c, 0);
@@ -44,12 +58,17 @@ export const useChat = (currentUserId: string | undefined) => {
     const counts: { [roomId: string]: number } = {};
 
     for (const room of rooms) {
-      const { count } = await supabase
+      const { data, count, error } = await supabase
         .from('chat_messages')
-        .select('id', { count: 'exact', head: true })
+        .select('*', { count: 'exact' })
         .eq('room_id', room.id)
         .neq('sender_id', currentUserId)
         .or('is_read.eq.false,is_read.is.null');
+
+      console.log(`Fetched unread messages raw data for room ${room.id}:`, data);
+      if (error) {
+        console.error('Error fetching unread counts:', error);
+      }
 
       counts[room.id] = count || 0;
     }
@@ -235,7 +254,12 @@ export const useChat = (currentUserId: string | undefined) => {
 
   // Listen for new messages across all rooms to update unread counts
   useEffect(() => {
-    if (!currentUserId) return;
+    if (!currentUserId) {
+      console.log('Global real-time listener skipped: No currentUserId');
+      return;
+    }
+
+    console.log('Initializing global real-time listener for user:', currentUserId);
 
     const channel = supabase.channel(`chat-unread-global-${Date.now()}-${Math.random()}`);
     channel.on(
@@ -246,33 +270,48 @@ export const useChat = (currentUserId: string | undefined) => {
         table: 'chat_messages',
       },
       (payload) => {
+        console.log('Real-time event received!', payload);
         const msg = payload.new as ChatMessageDB;
+        const isNotSender = msg.sender_id !== currentUserId;
+        console.log('Passes sender check (sender_id !== currentUserId):', isNotSender, { sender_id: msg.sender_id, currentUserId });
+        
         // If message is not from current user and not in the active room, increment unread
-        if (msg.sender_id !== currentUserId) {
-          if (msg.room_id === activeRoomId) {
+        if (isNotSender) {
+          if (msg.room_id === activeRoomIdRef.current) {
+            console.log('Message is in active room, marking as read');
             // Already viewing this room, mark as read
             markRoomAsRead(msg.room_id);
           } else {
-            setUnreadCounts(prev => ({
-              ...prev,
-              [msg.room_id]: (prev[msg.room_id] || 0) + 1
-            }));
+            console.log('Message is NOT in active room, incrementing unread count for room:', msg.room_id);
+            setUnreadCounts(prev => {
+              const newCount = (prev[msg.room_id] || 0) + 1;
+              console.log(`Updating unread count for room ${msg.room_id} to: ${newCount}`);
+              return {
+                ...prev,
+                [msg.room_id]: newCount
+              };
+            });
           }
         }
       }
     );
-    channel.subscribe();
+    
+    channel.subscribe((status) => {
+      console.log('Global real-time subscription status:', status);
+    });
 
     return () => {
+      console.log('Removing global real-time listener');
       supabase.removeChannel(channel);
     };
-  }, [currentUserId, activeRoomId, markRoomAsRead]);
+  }, [currentUserId, markRoomAsRead]);
 
   return {
     rooms,
     messages,
     activeRoomId,
     setActiveRoomId,
+    clearActiveRoom,
     loading,
     getOrCreateRoom,
     sendMessage,
