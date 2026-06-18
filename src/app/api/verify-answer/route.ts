@@ -17,7 +17,7 @@ export async function POST(req: Request) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.error("GEMINI_API_KEY is not defined in the environment.");
-      return NextResponse.json({ error: 'System configuration error' }, { status: 500 });
+      return NextResponse.json({ isMatch: false, reason: "AI service not configured" });
     }
 
     // Initialize SDK
@@ -31,13 +31,23 @@ export async function POST(req: Request) {
     Does the user answer match the meaning of the correct answer? (Allow typos/synonyms).
     Return ONLY "true" or "false".`;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = (response.text() || '').trim().toLowerCase();
+    let text = 'false';
+    try {
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      text = (response.text() || '').trim().toLowerCase();
 
-    console.log("Gemini response text:", text);
-    if (response.usageMetadata) {
-      console.log("Token Usage:", response.usageMetadata);
+      console.log("Gemini response text:", text);
+      if (response.usageMetadata) {
+        console.log("Token Usage:", response.usageMetadata);
+      }
+    } catch (geminiError) {
+      // Gemini SDK errors (invalid key, quota, network) — degrade gracefully
+      console.error('Gemini API error in verify-answer:', geminiError);
+      return NextResponse.json({
+        isMatch: false,
+        reason: "AI verification temporarily unavailable — please try again"
+      });
     }
 
     const isMatch = text.includes('true');

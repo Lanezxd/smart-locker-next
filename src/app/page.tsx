@@ -578,6 +578,7 @@ const DashboardView = ({
   currentUser,
   onLoginRequired,
   markAsCollected,
+  mqttPublish,
 }: {
   lockers: Locker[];
   userRole: 'finder' | 'receiver';
@@ -588,6 +589,7 @@ const DashboardView = ({
   currentUser: UserData | null;
   onLoginRequired: () => void;
   markAsCollected: (transactionId: string) => Promise<boolean>;
+  mqttPublish?: (topic: string, payload: string) => void;
 }) => {
   const [otpInputs, setOtpInputs] = useState<{ [lockerId: number]: string }>({});
   const [unlocking, setUnlocking] = useState<number | null>(null);
@@ -655,6 +657,12 @@ const DashboardView = ({
       if (!ok) {
         setUnlocking(null);
         return;
+      }
+
+      // Publish OPEN command to physical locker hardware via MQTT
+      const lockerIdNum = Number(locker.id);
+      if (!isNaN(lockerIdNum)) {
+        mqttPublish?.(`lostreturn/locker/${lockerIdNum}/command`, 'OPEN');
       }
 
       // Success - unlock and clear locker
@@ -2223,6 +2231,9 @@ function SmartLockerContent() {
     answer: ''
   });
 
+  // MQTT: ref holds the client instance — useRef avoids re-renders on connection events
+  const mqttRef = useRef<import('mqtt').MqttClient | null>(null);
+
   // Clear active room when leaving chat view
   useEffect(() => {
     if (view !== 'chat') {
@@ -2296,6 +2307,95 @@ function SmartLockerContent() {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // MQTT: stable publish helper — null-guards so callers never need to check connection state
+  const mqttPublish = useCallback((topic: string, payload: string) => {
+    if (mqttRef.current?.connected) {
+      mqttRef.current.publish(topic, payload, { qos: 1 });
+    }
+  }, []);
+
+  // MQTT: connection lifecycle — connect once on mount, clean up on unmount
+  useEffect(() => {
+    // Guard: only run in browser (skips SSR pass)
+    if (typeof window === 'undefined') return;
+
+    const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
+    if (!brokerUrl) {
+      console.warn('[MQTT] NEXT_PUBLIC_MQTT_BROKER_URL is not set — skipping connection.');
+      return;
+    }
+
+    let client: import('mqtt').MqttClient;
+
+    // Dynamic import: deferred to browser, avoids SSR module evaluation crash
+    // Turbopack ESM interop: mqtt v5 may expose connect on root or on .default
+    import('mqtt').then((mqttModule) => {
+      const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
+      if (!connectFn) {
+        console.error('[MQTT] Could not find connect function in module', mqttModule);
+        return;
+      }
+      client = connectFn(brokerUrl, {
+        clientId: `lostreturn-web-${Math.random().toString(16).slice(2, 8)}`,
+        reconnectPeriod: 3000,
+        connectTimeout: 8000,
+        username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
+        password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
+      });
+
+      mqttRef.current = client;
+
+      client.on('connect', () => {
+        console.log('[MQTT] Connected to', brokerUrl);
+        // Subscribe to all locker status topics with a single wildcard
+        client.subscribe('lostreturn/locker/+/status', { qos: 1 }, (err) => {
+          if (err) console.error('[MQTT] Subscribe error:', err);
+        });
+      });
+
+      client.on('message', (topic, message) => {
+        // topic format: lostreturn/locker/{id}/status
+        const parts = topic.split('/');
+        const lockerId = Number(parts[2]);
+        const payload = message.toString().trim().toUpperCase();
+
+        if (!lockerId || isNaN(lockerId)) return;
+
+        console.log(`[MQTT] ${topic} → ${payload}`);
+
+        setLockers(prev => prev.map(l => {
+          if (l.id !== lockerId) return l;
+          if (payload === 'ITEM_DEPOSITED') {
+            // Hardware confirmed a physical deposit — mark occupied if not already
+            if (l.status === 'available') {
+              return { ...l, status: 'occupied' as const };
+            }
+          } else if (payload === 'EMPTY') {
+            // Hardware confirmed door opened and locker is now empty
+            return { ...l, status: 'available' as const, item: null };
+          }
+          return l;
+        }));
+      });
+
+      client.on('error', (err) => {
+        console.error('[MQTT] Error:', err);
+      });
+
+      client.on('reconnect', () => {
+        console.log('[MQTT] Reconnecting...');
+      });
+    });
+
+    return () => {
+      // force=true: immediate teardown, prevents React Strict Mode ghost connections
+      if (client) {
+        client.end(true);
+      }
+      mqttRef.current = null;
     };
   }, []);
 
@@ -2432,6 +2532,11 @@ function SmartLockerContent() {
               } 
             : l
         ));
+        // Publish LOCK command so the physical locker secures the deposited item
+        const lockerIdNum = Number(selectedLocker.id);
+        if (!isNaN(lockerIdNum)) {
+          mqttPublish(`lostreturn/locker/${lockerIdNum}/command`, 'LOCK');
+        }
         toast.success('ฝากของสำเร็จ! ตู้จะเปิดอัตโนมัติ');
         setView('dashboard');
         setSelectedLocker(null);
@@ -2467,6 +2572,12 @@ function SmartLockerContent() {
 
       if (!response.ok) throw new Error('Failed to verify answer');
       const data = await response.json();
+
+      // If server returned a reason (e.g. AI unavailable), surface it and stop
+      if (!data.isMatch && data.reason) {
+        setAiMessage({ type: 'error', text: data.reason });
+        return;
+      }
 
       if (data.isMatch) {
         const generatedOtp = Math.floor(100000 + Math.random() * 900000);
@@ -2617,6 +2728,7 @@ function SmartLockerContent() {
           currentUser={currentUser}
           onLoginRequired={() => setShowLoginModal(true)}
           markAsCollected={markAsCollected}
+          mqttPublish={mqttPublish}
         />
       )}
       
