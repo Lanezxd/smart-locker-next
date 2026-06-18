@@ -16,7 +16,7 @@ interface AdminMessage {
   created_at: string;
 }
 
-const ContactAdminPage = () => {
+const ContactAdminPageContent = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const from = searchParams?.get('from');
@@ -172,4 +172,15 @@ const ContactAdminPage = () => {
   );
 };
 
-export default ContactAdminPage;
+export default function ContactAdminPage() {
+  return (
+    <React.Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    }>
+      <ContactAdminPageContent />
+    </React.Suspense>
+  );
+}
+

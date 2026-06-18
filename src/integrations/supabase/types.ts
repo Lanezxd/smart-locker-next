@@ -70,6 +70,7 @@ export type Database = {
           message_type: string
           room_id: string
           sender_id: string
+          is_read: boolean
         }
         Insert: {
           content: string
@@ -78,6 +79,7 @@ export type Database = {
           message_type?: string
           room_id: string
           sender_id: string
+          is_read?: boolean
         }
         Update: {
           content?: string
@@ -86,6 +88,7 @@ export type Database = {
           message_type?: string
           room_id?: string
           sender_id?: string
+          is_read?: boolean
         }
         Relationships: [
           {

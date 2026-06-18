@@ -1,8 +1,28 @@
 import { NextResponse } from 'next/server';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export async function POST(req: Request) {
   try {
-    const { question, correctAnswer, userAnswer } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const question = body.question;
+    const correctAnswer = body.correctAnswer;
+    const userAnswer = body.userAnswer;
+
+    // Safety checks for undefined or empty values
+    if (!question || !correctAnswer || !userAnswer) {
+      console.warn("Missing verification fields:", { question, correctAnswer, userAnswer });
+      return NextResponse.json({ isMatch: false, reason: "Missing input data" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error("GEMINI_API_KEY is not defined in the environment.");
+      return NextResponse.json({ error: 'System configuration error' }, { status: 500 });
+    }
+
+    // Initialize SDK
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `You are a locker identity verification system.
     Question: "${question}"
@@ -11,23 +31,20 @@ export async function POST(req: Request) {
     Does the user answer match the meaning of the correct answer? (Allow typos/synonyms).
     Return ONLY "true" or "false".`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = (response.text() || '').trim().toLowerCase();
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    });
+    console.log("Gemini response text:", text);
+    if (response.usageMetadata) {
+      console.log("Token Usage:", response.usageMetadata);
+    }
 
-    const data = await response.json();
-    if (!response.ok) return NextResponse.json({ error: 'API Error' }, { status: 500 });
-
-    console.log("Token Usage:", data.usageMetadata);
-
-    const text = data.candidates[0].content.parts[0].text.trim().toLowerCase();
-    return NextResponse.json({ isMatch: text.includes('true') });
+    const isMatch = text.includes('true');
+    return NextResponse.json({ isMatch });
 
   } catch (error) {
+    console.error('System Error in verify-answer:', error);
     return NextResponse.json({ error: 'System Error' }, { status: 500 });
   }
 }
