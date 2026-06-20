@@ -134,6 +134,71 @@ const AdminDashboardPage = () => {
     setActionLoading(null);
   };
 
+  const handleAdminDirectUnlock = async (transactionId: string, lockerId: number) => {
+    setActionLoading(transactionId);
+    try {
+      const { error: dbError } = await supabase.rpc('mark_transaction_collected', { p_transaction_id: transactionId });
+      if (dbError) {
+        toast.error('ไม่สามารถปลดล็อกตู้ได้');
+        setActionLoading(null);
+        return;
+      }
+
+      const mqttModule = await import('mqtt');
+      const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
+      if (!connectFn) {
+        throw new Error('MQTT connection function not found');
+      }
+
+      const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
+      if (!brokerUrl) {
+        throw new Error('MQTT broker URL is not set');
+      }
+
+      const client = connectFn(brokerUrl, {
+        clientId: `lostreturn-admin-${Math.random().toString(16).slice(2, 8)}`,
+        connectTimeout: 8000,
+        username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
+        password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          client.end(true);
+          reject(new Error('MQTT connection timeout'));
+        }, 5000);
+
+        client.on('connect', () => {
+          clearTimeout(timeout);
+          const topic = `lostreturn/locker/${lockerId}/command`;
+          const payload = 'OPEN';
+          client.publish(topic, payload, { qos: 1 }, (err) => {
+            client.end(true);
+            if (err) {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        });
+
+        client.on('error', (err) => {
+          clearTimeout(timeout);
+          client.end(true);
+          reject(err);
+        });
+      });
+
+      toast.success('ปลดล็อกตู้และส่งคำสั่งเปิดตู้สำเร็จ!');
+    } catch (mqttError) {
+      console.error('MQTT direct unlock error:', mqttError);
+      toast.warning('ปลดล็อกตู้สำเร็จในระบบ แต่เกิดข้อผิดพลาดในการส่งคำสั่งเปิดตู้ผ่าน MQTT');
+    } finally {
+      fetchTransactions();
+      setActionLoading(null);
+    }
+  };
+
   const handleDeletePost = async (postId: string) => {
     if (!confirm('ลบโพสต์นี้?')) return;
     setActionLoading(postId);
@@ -241,7 +306,7 @@ const AdminDashboardPage = () => {
                     {tx.image_url && <img src={tx.image_url} alt="" className="w-16 h-16 rounded-lg object-cover ml-3" />}
                   </div>
                   <button
-                    onClick={() => handleUnlockLocker(tx.id)}
+                    onClick={() => handleAdminDirectUnlock(tx.id, tx.locker_id)}
                     disabled={actionLoading === tx.id}
                     className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-success/10 text-success font-semibold hover:bg-success/20 transition-colors disabled:opacity-50"
                   >
