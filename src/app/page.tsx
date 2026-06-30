@@ -2532,10 +2532,10 @@ function SmartLockerContent() {
               } 
             : l
         ));
-        // Publish LOCK command so the physical locker secures the deposited item
+        // Publish OPEN command so the physical locker opens for the deposited item
         const lockerIdNum = Number(selectedLocker.id);
         if (!isNaN(lockerIdNum)) {
-          mqttPublish(`lostreturn/locker/${lockerIdNum}/command`, 'LOCK');
+          mqttPublish(`lostreturn/locker/${lockerIdNum}/command`, 'OPEN');
         }
         toast.success('ฝากของสำเร็จ! ตู้จะเปิดอัตโนมัติ');
         setView('dashboard');
