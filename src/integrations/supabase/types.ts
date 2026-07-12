@@ -228,6 +228,7 @@ export type Database = {
           item_description: string
           locker_id: number
           otp: string | null
+          otp_generated_at: string | null
           security_answer: string | null
           security_question: string | null
           status: string
@@ -244,6 +245,7 @@ export type Database = {
           item_description: string
           locker_id: number
           otp?: string | null
+          otp_generated_at?: string | null
           security_answer?: string | null
           security_question?: string | null
           status?: string
@@ -260,6 +262,7 @@ export type Database = {
           item_description?: string
           locker_id?: number
           otp?: string | null
+          otp_generated_at?: string | null
           security_answer?: string | null
           security_question?: string | null
           status?: string

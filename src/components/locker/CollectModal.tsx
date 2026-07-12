@@ -1,5 +1,5 @@
 'use client';
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, KeyRound, CheckCircle, AlertCircle, ShieldQuestion, MessageSquare, Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,12 +30,47 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
   const [userAnswer, setUserAnswer] = useState('');
   const [otp, setOtp] = useState('');
   const [generatedOTP, setGeneratedOTP] = useState('');
+  const [otpGeneratedAt, setOtpGeneratedAt] = useState<Date | null>(null);
+  const [otpTimeLeft, setOtpTimeLeft] = useState<number>(0);
   const [error, setError] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [attempts, setAttempts] = useState(0);
   const { markAsCollected } = useLockerTransactions();
+
+  // Timer useEffect for Collect OTP timeout
+  useEffect(() => {
+    if (!otpGeneratedAt) return;
+
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
+      const remaining = 600 - elapsed;
+      if (remaining <= 0) {
+        setOtpTimeLeft(0);
+        clearInterval(interval);
+        // Timeout! Handle OTP expiration
+        setGeneratedOTP('');
+        setOtpGeneratedAt(null);
+        setOtp('');
+        setStep('security');
+        setAttempts(0);
+        setUserAnswer('');
+        setError('รหัส OTP หมดอายุแล้ว กรุณาตอบคำถามยืนยันสิทธิ์อีกครั้ง');
+        toast.error('รหัส OTP หมดอายุแล้ว กรุณาตอบคำถามยืนยันสิทธิ์อีกครั้ง');
+      } else {
+        setOtpTimeLeft(remaining);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [otpGeneratedAt]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   const handleSecuritySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,6 +125,7 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
         // Answer is correct - generate OTP
         const newOTP = generateOTP();
         setGeneratedOTP(newOTP);
+        setOtpGeneratedAt(new Date());
         setStep('otp');
         toast.success('ยืนยันตัวตนสำเร็จ!');
       } else {
@@ -122,7 +158,7 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     }
   };
 
-  const handleOTPVerify = (e: React.FormEvent) => {
+  const handleOTPVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (otp.length !== 6) {
@@ -130,9 +166,82 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
       return;
     }
 
+    if (otpGeneratedAt) {
+      const elapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
+      if (elapsed >= 600) {
+        setError('รหัส OTP หมดอายุแล้ว');
+        toast.error('รหัส OTP หมดอายุแล้ว');
+        setGeneratedOTP('');
+        setOtpGeneratedAt(null);
+        setOtp('');
+        setStep('security');
+        setAttempts(0);
+        setUserAnswer('');
+        return;
+      }
+    }
+
     if (otp === generatedOTP) {
-      setStep('success');
       setError('');
+      setStep('verifying');
+
+      try {
+        if (transactionId) {
+          // 1. Update Supabase with matched OTP, timestamp, status and collected_at
+          const { error: updateError } = await supabase
+            .from('locker_transactions')
+            .update({
+              otp: otp,
+              otp_generated_at: otpGeneratedAt?.toISOString(),
+              status: 'collected',
+              collected_at: new Date().toISOString()
+            })
+            .eq('id', transactionId);
+
+          if (updateError) {
+            console.error('Error updating OTP in Supabase:', updateError);
+          }
+
+          // Update transaction status to collected
+          await markAsCollected(transactionId);
+        }
+
+        // 2. Publish MQTT OPEN command
+        try {
+          const mqttModule = await import('mqtt');
+          const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
+          if (connectFn && locker) {
+            const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
+            if (brokerUrl) {
+              const client = connectFn(brokerUrl, {
+                clientId: `lostreturn-collect-${Math.random().toString(16).slice(2, 8)}`,
+                connectTimeout: 8000,
+                username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
+                password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
+              });
+
+              client.on('connect', () => {
+                client.publish(`lostreturn/locker/${locker.id}/command`, 'OPEN', { qos: 1 }, () => {
+                  client.end(true);
+                });
+              });
+
+              client.on('error', (err) => {
+                console.error('[MQTT] Collect error:', err);
+                client.end(true);
+              });
+            }
+          }
+        } catch (mqttErr) {
+          console.error('[MQTT] Failed to publish OPEN command:', mqttErr);
+        }
+
+        setStep('success');
+      } catch (err) {
+        console.error('Error completing collection:', err);
+        setError('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+        setStep('otp');
+      }
     } else {
       setError('รหัส OTP ไม่ถูกต้อง');
     }
@@ -168,16 +277,13 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     // Simulate depositor approving and sending OTP
     const newOTP = generateOTP();
     setGeneratedOTP(newOTP);
+    setOtpGeneratedAt(new Date());
     setStep('otp');
     toast.success('ผู้ฝากอนุมัติแล้ว! กรุณากรอก OTP');
   };
 
   const handleConfirm = async () => {
     if (locker) {
-      // Mark transaction as collected in database
-      if (transactionId) {
-        await markAsCollected(transactionId);
-      }
       onCollect(locker.id);
       toast.success('รับของสำเร็จ!');
       handleClose();
@@ -189,6 +295,8 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     setUserAnswer('');
     setOtp('');
     setGeneratedOTP('');
+    setOtpGeneratedAt(null);
+    setOtpTimeLeft(0);
     setError('');
     setChatMessages([]);
     setNewMessage('');
@@ -339,6 +447,9 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
                     <Button type="submit" className="w-full" size="lg">
                       ยืนยัน OTP
                     </Button>
+                    <p className="text-xs text-destructive font-semibold text-center mt-3">
+                      รหัสจะหมดอายุใน {formatTime(otpTimeLeft)} นาที
+                    </p>
                   </form>
                 )}
 

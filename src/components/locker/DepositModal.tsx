@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Package, Send, CheckCircle, ShieldQuestion } from "lucide-react";
@@ -52,7 +52,7 @@ export function DepositModal({ locker, isOpen, onClose, onDeposit, userId }: Dep
     setStep('security');
   };
 
-  const handleSecuritySubmit = (e: React.FormEvent) => {
+  const handleSecuritySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.securityQuestion.question || !formData.securityQuestion.answer) {
@@ -60,28 +60,26 @@ export function DepositModal({ locker, isOpen, onClose, onDeposit, userId }: Dep
       return;
     }
 
-    const otp = generateOTP();
-    setGeneratedOTP(otp);
-    setStep('otp');
-  };
-
-  const handleConfirm = async () => {
     if (locker) {
-      // Save to database
-      await createDeposit({
-        locker_id: locker.id,
-        item_description: formData.itemDescription,
-        depositor_name: formData.depositorName,
-        depositor_contact: formData.depositorContact,
-        security_question: formData.securityQuestion.question,
-        security_answer: formData.securityQuestion.answer,
-        otp: generatedOTP,
-        user_id: userId
-      });
-      
-      onDeposit(locker.id, formData, generatedOTP);
-      toast.success(`ฝากของสำเร็จ! OTP: ${generatedOTP}`);
-      handleClose();
+      try {
+        // Save to database (otp and otp_generated_at left blank/NULL)
+        await createDeposit({
+          locker_id: locker.id,
+          item_description: formData.itemDescription,
+          depositor_name: formData.depositorName,
+          depositor_contact: formData.depositorContact,
+          security_question: formData.securityQuestion.question,
+          security_answer: formData.securityQuestion.answer,
+          user_id: userId
+        });
+        
+        onDeposit(locker.id, formData, '');
+        toast.success('ฝากของสำเร็จ! ตั้งคำถามยืนยันสิทธิ์แล้ว');
+        handleClose();
+      } catch (err) {
+        console.error('Error during deposit:', err);
+        toast.error('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+      }
     }
   };
 
@@ -215,40 +213,13 @@ export function DepositModal({ locker, isOpen, onClose, onDeposit, userId }: Dep
                         ย้อนกลับ
                       </Button>
                       <Button type="submit" className="flex-1">
-                        <Send className="w-4 h-4 mr-2" />
-                        สร้าง OTP
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        ยืนยันการฝาก
                       </Button>
                     </div>
                   </form>
                 )}
 
-                {step === 'otp' && (
-                  <div className="text-center space-y-6">
-                    <div className="p-4 rounded-2xl bg-success/10 inline-block">
-                      <CheckCircle className="w-12 h-12 text-success" />
-                    </div>
-                    
-                    <div>
-                      <p className="text-muted-foreground mb-2">รหัส OTP สำหรับเปิดตู้</p>
-                      <div className="text-4xl font-bold tracking-[0.3em] gradient-primary bg-clip-text text-transparent">
-                        {generatedOTP}
-                      </div>
-                    </div>
-                    
-                    <p className="text-sm text-muted-foreground">
-                      กรุณานำรหัสนี้ไปกรอกที่ตู้ล็อกเกอร์ภายใน 10 นาที
-                    </p>
-
-                    <div className="flex gap-3">
-                      <Button variant="outline" onClick={handleClose} className="flex-1">
-                        ปิด
-                      </Button>
-                      <Button onClick={handleConfirm} className="flex-1">
-                        ยืนยันการฝาก
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </CardContent>
             </Card>
           </motion.div>

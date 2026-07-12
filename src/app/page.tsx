@@ -579,6 +579,11 @@ const DashboardView = ({
   onLoginRequired,
   markAsCollected,
   mqttPublish,
+  otpGeneratedAt,
+  otpTimeLeft,
+  setOtp,
+  setOtpGeneratedAt,
+  selectedLocker,
 }: {
   lockers: Locker[];
   userRole: 'finder' | 'receiver';
@@ -590,11 +595,22 @@ const DashboardView = ({
   onLoginRequired: () => void;
   markAsCollected: (transactionId: string) => Promise<boolean>;
   mqttPublish?: (topic: string, payload: string) => void;
+  otpGeneratedAt: Date | null;
+  otpTimeLeft: number;
+  setOtp: (otp: number) => void;
+  setOtpGeneratedAt: (date: Date | null) => void;
+  selectedLocker: Locker | null;
 }) => {
   const [otpInputs, setOtpInputs] = useState<{ [lockerId: number]: string }>({});
   const [unlocking, setUnlocking] = useState<number | null>(null);
   const [errors, setErrors] = useState<{ [lockerId: number]: string }>({});
   const [viewingImage, setViewingImage] = useState<{ src: string; name: string } | null>(null);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   const handleOtpChange = (lockerId: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
@@ -607,6 +623,14 @@ const DashboardView = ({
     if (enteredOtp.length !== 6) {
       setErrors({ ...errors, [locker.id]: 'กรุณากรอกรหัส 6 หลัก' });
       return;
+    }
+
+    if (otpGeneratedAt) {
+      const elapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
+      if (elapsed >= 600) {
+        setErrors({ ...errors, [locker.id]: 'รหัส OTP หมดอายุแล้ว' });
+        return;
+      }
     }
 
     setUnlocking(locker.id);
@@ -653,6 +677,21 @@ const DashboardView = ({
         return;
       }
 
+      // Update Supabase transaction: save successfully matched OTP, otp_generated_at, collected_at, and status
+      const { error: updateError } = await supabase
+        .from('locker_transactions')
+        .update({
+          otp: enteredOtp,
+          otp_generated_at: otpGeneratedAt ? otpGeneratedAt.toISOString() : new Date().toISOString(),
+          status: 'collected',
+          collected_at: new Date().toISOString()
+        })
+        .eq('id', transactionId);
+
+      if (updateError) {
+        console.error('Error updating OTP in Supabase:', updateError);
+      }
+
       const ok = await markAsCollected(transactionId);
       if (!ok) {
         setUnlocking(null);
@@ -673,6 +712,10 @@ const DashboardView = ({
       ));
       toast.success(`ตู้ ${String(locker.id).padStart(2, '0')} ปลดล็อกแล้ว! กรุณาหยิบของ`);
       setOtpInputs({ ...otpInputs, [locker.id]: '' });
+
+      // Clear OTP state
+      setOtp(0);
+      setOtpGeneratedAt(null);
     } else {
       setErrors({ ...errors, [locker.id]: 'รหัส OTP ไม่ถูกต้อง' });
     }
@@ -802,7 +845,7 @@ const DashboardView = ({
                       {locker.item.otp && (
                         <span className="inline-flex items-center gap-1 text-[10px] bg-success/20 text-success px-1.5 py-0.5 rounded-full shrink-0">
                           <KeyRound className="w-2.5 h-2.5" />
-                          รอ OTP
+                          รอ OTP {selectedLocker?.id === locker.id && otpTimeLeft > 0 ? `(${formatTime(otpTimeLeft)})` : ''}
                         </span>
                       )}
                     </div>
@@ -816,7 +859,7 @@ const DashboardView = ({
                     >
                       <div className="flex items-center gap-1 text-[9px] text-background/70 whitespace-nowrap">
                         <KeyRound className="w-2.5 h-2.5 shrink-0" />
-                        <span>กรอกรหัส OTP เพื่อปลดล็อก</span>
+                        <span>กรอกรหัส OTP เพื่อปลดล็อก {selectedLocker?.id === locker.id && otpTimeLeft > 0 ? `(เหลือ ${formatTime(otpTimeLeft)} น.)` : ''}</span>
                       </div>
                       <div className="flex gap-1">
                         <input
@@ -1325,6 +1368,7 @@ const ChatView = ({
   currentUserId,
   isDepositor,
   clearActiveRoom,
+  setOtpGeneratedAt,
 }: {
   setView: (view: ViewType) => void;
   selectedLocker: Locker | null;
@@ -1337,6 +1381,7 @@ const ChatView = ({
   currentUserId: string | undefined;
   isDepositor: boolean;
   clearActiveRoom: () => void;
+  setOtpGeneratedAt: (date: Date | null) => void;
 }) => {
   const otherUserName = isDepositor 
     ? 'ผู้มารับของ' 
@@ -1373,12 +1418,26 @@ const ChatView = ({
         .eq('id', selectedLocker.item.transactionId)
         .single();
 
-      if (transaction?.otp) {
-        await sendMessage(chatRoom.id, `รหัส OTP สำหรับเปิดตู้: ${transaction.otp}`, 'otp_sent');
-        toast.success('ส่งรหัส OTP ให้ผู้รับแล้ว!');
-      } else {
-        toast.error('ไม่พบรหัส OTP สำหรับตู้นี้');
+      let otpToSend = transaction?.otp;
+      let generatedAt = new Date();
+
+      if (!otpToSend) {
+        // Generate a new OTP since it's not set
+        const generatedOtp = Math.floor(100000 + Math.random() * 900000);
+        otpToSend = String(generatedOtp);
+
+        // Update database with generated OTP and generation timestamp
+        await supabase
+          .from('locker_transactions')
+          .update({
+            otp: otpToSend,
+            otp_generated_at: generatedAt.toISOString()
+          })
+          .eq('id', selectedLocker.item.transactionId);
       }
+
+      await sendMessage(chatRoom.id, `รหัส OTP สำหรับเปิดตู้: ${otpToSend}`, 'otp_sent');
+      toast.success('ส่งรหัส OTP ให้ผู้รับแล้ว!');
     } catch (err) {
       console.error('Error sending OTP:', err);
       toast.error('เกิดข้อผิดพลาด');
@@ -1393,6 +1452,7 @@ const ChatView = ({
     if (otpMatch) {
       const otpNum = parseInt(otpMatch[0]);
       setOtp(otpNum);
+      setOtpGeneratedAt(new Date()); // Start 10-minute timer for the receiver
       if (selectedLocker) {
         setLockers(lockers.map(l => 
           l.id === selectedLocker.id 
@@ -1535,15 +1595,23 @@ const OtpDisplayView = ({
   otp, 
   selectedLocker, 
   setView,
-  handleGoHome
+  handleGoHome,
+  otpTimeLeft
 }: {
   otp: number;
   selectedLocker: Locker | null;
   setView: (view: ViewType) => void;
   handleGoHome: () => void;
+  otpTimeLeft: number;
 }) => {
   const otpString = String(otp).padStart(6, '0');
   const [copied, setCopied] = useState(false);
+  
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
   
   const handleCopyOtp = async () => {
     try {
@@ -1604,7 +1672,7 @@ const OtpDisplayView = ({
             )}
           </button>
           
-          <p className="text-xs text-muted-foreground mt-3">รหัสจะหมดอายุใน 10 นาที</p>
+          <p className="text-xs text-destructive font-semibold mt-3">รหัสจะหมดอายุใน {formatTime(otpTimeLeft)} นาที</p>
         </div>
 
         {/* Instructions */}
@@ -1645,6 +1713,9 @@ const OtpView = ({
   setView, 
   resetState,
   markAsCollected,
+  otpTimeLeft,
+  otpGeneratedAt,
+  mqttPublish,
 }: {
   otp: number;
   selectedLocker: Locker | null;
@@ -1653,12 +1724,21 @@ const OtpView = ({
   setView: (view: ViewType) => void;
   resetState: () => void;
   markAsCollected: (transactionId: string) => Promise<boolean>;
+  otpTimeLeft: number;
+  otpGeneratedAt: Date | null;
+  mqttPublish?: (topic: string, payload: string) => void;
 }) => {
   const [otpInput, setOtpInput] = useState(['', '', '', '', '', '']);
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [error, setError] = useState('');
   const [unlocked, setUnlocked] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   const handleInputChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return; // Only allow digits
@@ -1700,6 +1780,14 @@ const OtpView = ({
       return;
     }
 
+    if (otpGeneratedAt) {
+      const elapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
+      if (elapsed >= 600) {
+        setError('รหัส OTP หมดอายุแล้ว');
+        return;
+      }
+    }
+
     setIsUnlocking(true);
     
     // Simulate unlock delay
@@ -1707,12 +1795,13 @@ const OtpView = ({
 
     // Check against local state first, then database
     let otpMatch = enteredOtp === String(otp);
+    let transactionId = selectedLocker?.item?.transactionId;
 
-    if (!otpMatch && selectedLocker?.item?.transactionId) {
+    if (!otpMatch && transactionId) {
       const { data: txn } = await supabase
         .from('locker_transactions')
         .select('otp')
-        .eq('id', selectedLocker.item.transactionId)
+        .eq('id', transactionId)
         .single();
       if (txn?.otp && enteredOtp === txn.otp) {
         otpMatch = true;
@@ -1720,6 +1809,28 @@ const OtpView = ({
     }
 
     if (otpMatch) {
+      if (transactionId) {
+        // Save to Supabase table
+        const { error: updateError } = await supabase
+          .from('locker_transactions')
+          .update({
+            otp: enteredOtp,
+            otp_generated_at: otpGeneratedAt ? otpGeneratedAt.toISOString() : new Date().toISOString(),
+            status: 'collected',
+            collected_at: new Date().toISOString()
+          })
+          .eq('id', transactionId);
+        if (updateError) console.error('Error updating OTP:', updateError);
+      }
+
+      // Publish OPEN command to physical locker hardware via MQTT
+      if (selectedLocker) {
+        const lockerIdNum = Number(selectedLocker.id);
+        if (!isNaN(lockerIdNum)) {
+          mqttPublish?.(`lostreturn/locker/${lockerIdNum}/command`, 'OPEN');
+        }
+      }
+
       setUnlocked(true);
       toast.success('ปลดล็อกตู้สำเร็จ!');
     } else {
@@ -1819,7 +1930,7 @@ const OtpView = ({
           </p>
         )}
 
-        <p className="text-xs text-muted-foreground mb-6">รหัสจะหมดอายุใน 10 นาที</p>
+        <p className="text-xs text-destructive font-semibold mb-6">รหัสจะหมดอายุใน {formatTime(otpTimeLeft)} นาที</p>
 
         <button
           onClick={handleUnlock}
@@ -2217,6 +2328,41 @@ function SmartLockerContent() {
   const [lockers, setLockers] = useState<Locker[]>(initialLockers);
   const [selectedLocker, setSelectedLocker] = useState<Locker | null>(null);
   const [otp, setOtp] = useState<number>(0);
+  const [otpGeneratedAt, setOtpGeneratedAt] = useState<Date | null>(null);
+  const [otpTimeLeft, setOtpTimeLeft] = useState<number>(0);
+  
+  // Timer useEffect for Pickup OTP timeout
+  useEffect(() => {
+    if (!otpGeneratedAt) return;
+
+    // Set initial remaining time
+    const initialElapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
+    setOtpTimeLeft(Math.max(0, 600 - initialElapsed));
+
+    const interval = setInterval(() => {
+      const elapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
+      const remaining = 600 - elapsed;
+      if (remaining <= 0) {
+        setOtpTimeLeft(0);
+        clearInterval(interval);
+        // Timeout! Handle OTP expiration
+        setOtp(0);
+        setOtpGeneratedAt(null);
+        // Update local lockers state to remove OTP
+        setLockers(prev => prev.map(l => l.item ? { ...l, item: { ...l.item, otp: undefined } } : l));
+        toast.error('รหัส OTP หมดอายุแล้ว กรุณาตอบคำถามยืนยันสิทธิ์อีกครั้ง');
+        // Force back to verify view
+        setView('verify');
+        setVerifyAttempts(0);
+        setVerifyAnswer('');
+      } else {
+        setOtpTimeLeft(remaining);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [otpGeneratedAt]);
+
   const [loading, setLoading] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
   const [aiMessage, setAiMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -2484,6 +2630,9 @@ function SmartLockerContent() {
     setVerifyAnswer('');
     setVerifyAttempts(0);
     setDepositForm({ name: '', image: null, question: '', answer: '' });
+    setOtp(0);
+    setOtpGeneratedAt(null);
+    setOtpTimeLeft(0);
   };
 
   const handleModeSelect = (mode: 'finder' | 'receiver') => {
@@ -2495,10 +2644,7 @@ function SmartLockerContent() {
     setLoading(true);
     
     if (selectedLocker) {
-      // Generate OTP for deposit
-      const generatedOtp = Math.floor(100000 + Math.random() * 900000);
-      
-      // Save to database with image
+      // Save to database with image (leaving otp and otp_generated_at blank/NULL)
       const result = await createDeposit({
         locker_id: selectedLocker.id,
         item_description: depositForm.name,
@@ -2506,7 +2652,6 @@ function SmartLockerContent() {
         depositor_contact: currentUser?.email || currentUser?.phone || '',
         security_question: depositForm.question,
         security_answer: depositForm.answer,
-        otp: String(generatedOtp),
         user_id: user?.id,
         image_base64: depositForm.image
       });
@@ -2587,6 +2732,7 @@ function SmartLockerContent() {
             : l
         ));
         setOtp(generatedOtp);
+        setOtpGeneratedAt(new Date());
         setAiMessage({ type: 'success', text: 'คำตอบถูกต้อง! นี่คือรหัส OTP ของคุณ' });
         setTimeout(() => {
           setView('otp_display');
@@ -2613,6 +2759,8 @@ function SmartLockerContent() {
     setView('home');
     setSelectedLocker(null);
     setOtp(0);
+    setOtpGeneratedAt(null);
+    setOtpTimeLeft(0);
     setVerifyAnswer('');
     setVerifyAttempts(0);
     setAiMessage(null);
@@ -2677,6 +2825,7 @@ function SmartLockerContent() {
         currentUserId={user?.id}
         isDepositor={chatIsDepositor}
         clearActiveRoom={clearActiveRoom}
+        setOtpGeneratedAt={setOtpGeneratedAt}
       />
     );
   }
@@ -2688,6 +2837,7 @@ function SmartLockerContent() {
         selectedLocker={selectedLocker} 
         setView={setView}
         handleGoHome={handleGoHome}
+        otpTimeLeft={otpTimeLeft}
       />
     );
   }
@@ -2702,6 +2852,9 @@ function SmartLockerContent() {
         setView={setView} 
         resetState={resetState}
         markAsCollected={markAsCollected}
+        otpTimeLeft={otpTimeLeft}
+        otpGeneratedAt={otpGeneratedAt}
+        mqttPublish={mqttPublish}
       />
     );
   }
@@ -2729,6 +2882,11 @@ function SmartLockerContent() {
           onLoginRequired={() => setShowLoginModal(true)}
           markAsCollected={markAsCollected}
           mqttPublish={mqttPublish}
+          otpGeneratedAt={otpGeneratedAt}
+          otpTimeLeft={otpTimeLeft}
+          setOtp={setOtp}
+          setOtpGeneratedAt={setOtpGeneratedAt}
+          selectedLocker={selectedLocker}
         />
       )}
       

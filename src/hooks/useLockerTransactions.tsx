@@ -13,6 +13,7 @@ export interface LockerTransaction {
   security_question: string | null;
   security_answer: string | null;
   otp: string | null;
+  otp_generated_at: string | null;
   user_id: string | null;
   deposited_at: string;
   collected_at: string | null;
@@ -82,7 +83,7 @@ export const useLockerTransactions = () => {
     depositor_contact: string;
     security_question?: string;
     security_answer?: string;
-    otp: string;
+    otp?: string | null;
     user_id?: string;
     image_base64?: string | null;
   }) => {
@@ -135,7 +136,8 @@ export const useLockerTransactions = () => {
         depositor_contact: data.depositor_contact,
         security_question: data.security_question || null,
         security_answer: data.security_answer || null,
-        otp: data.otp,
+        otp: data.otp || null,
+        otp_generated_at: null,
         user_id: data.user_id || null,
         status: 'deposited',
         image_url: imageUrl
