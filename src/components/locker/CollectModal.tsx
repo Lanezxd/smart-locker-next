@@ -72,6 +72,37 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  const publishOTP = async (otpValue: string) => {
+    try {
+      const mqttModule = await import('mqtt');
+      const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
+      if (connectFn && locker) {
+        const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
+        if (brokerUrl) {
+          const client = connectFn(brokerUrl, {
+            clientId: `lostreturn-otp-pub-${Math.random().toString(16).slice(2, 8)}`,
+            connectTimeout: 8000,
+            username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
+            password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
+          });
+
+          client.on('connect', () => {
+            client.publish(`lostreturn/locker/${locker.id}/command`, JSON.stringify({ otp: otpValue }), { qos: 1 }, () => {
+              client.end(true);
+            });
+          });
+
+          client.on('error', (err) => {
+            console.error('[MQTT] OTP publish error:', err);
+            client.end(true);
+          });
+        }
+      }
+    } catch (mqttErr) {
+      console.error('[MQTT] Failed to publish OTP:', mqttErr);
+    }
+  };
+
   const handleSecuritySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -124,6 +155,7 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
       if (data.isMatch) {
         // Answer is correct - generate OTP
         const newOTP = generateOTP();
+        publishOTP(newOTP);
         setGeneratedOTP(newOTP);
         setOtpGeneratedAt(new Date());
         setStep('otp');
@@ -276,6 +308,7 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
   const handleDepositorApprove = () => {
     // Simulate depositor approving and sending OTP
     const newOTP = generateOTP();
+    publishOTP(newOTP);
     setGeneratedOTP(newOTP);
     setOtpGeneratedAt(new Date());
     setStep('otp');

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 
 export async function POST(req: Request) {
   try {
@@ -8,21 +8,21 @@ export async function POST(req: Request) {
     const correctAnswer = body.correctAnswer;
     const userAnswer = body.userAnswer;
 
-    // Safety checks for undefined or empty values
+    // Safety checks for undefined or empty values (คงเดิม)
     if (!question || !correctAnswer || !userAnswer) {
       console.warn("Missing verification fields:", { question, correctAnswer, userAnswer });
       return NextResponse.json({ isMatch: false, reason: "Missing input data" });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    // เปลี่ยนมาดึงค่าจาก GROQ_API_KEY
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-      console.error("GEMINI_API_KEY is not defined in the environment.");
+      console.error("GROQ_API_KEY is not defined in the environment.");
       return NextResponse.json({ isMatch: false, reason: "AI service not configured" });
     }
 
-    // Initialize SDK
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    // Initialize Groq SDK
+    const groq = new Groq({ apiKey });
 
     const prompt = `You are a locker identity verification system.
     Question: "${question}"
@@ -33,23 +33,36 @@ export async function POST(req: Request) {
 
     let text = 'false';
     try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      text = (response.text() || '').trim().toLowerCase();
+      // เรียกใช้โมเดลของ Groq (เลือก llama-3.3-70b-versatile ที่ฉลาดและฟรีโควตาสูง)
+      const chatCompletion = await groq.chat.completions.create({
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        model: 'llama-3.3-70b-versatile',
+        temperature: 0.1, // ตั้งค่าต่ำเพื่อให้ผลลัพธ์เป็นคำว่า true/false นิ่ง ๆ แม่นยำ
+      });
 
-      console.log("Gemini response text:", text);
-      if (response.usageMetadata) {
-        console.log("Token Usage:", response.usageMetadata);
+      text = (chatCompletion.choices[0]?.message?.content || '').trim().toLowerCase();
+
+      console.log("Groq response text:", text);
+
+      // แสดงปริมาณ Token Usage ในฝั่ง Groq
+      if (chatCompletion.usage) {
+        console.log("Token Usage (Groq):", chatCompletion.usage);
       }
-    } catch (geminiError) {
-      // Gemini SDK errors (invalid key, quota, network) — degrade gracefully
-      console.error('Gemini API error in verify-answer:', geminiError);
+    } catch (groqError) {
+      // โหมดประคองระบบหาก Groq Error (ทำงานแบบเดิมกับ GeminiError)
+      console.error('Groq API error in verify-answer:', groqError);
       return NextResponse.json({
         isMatch: false,
         reason: "AI verification temporarily unavailable — please try again"
       });
     }
 
+    // ส่งค่าผลลัพธ์กลับไปรูปเดิมเหมือนโค้ดเดิมของคุณเป๊ะ ๆ 
     const isMatch = text.includes('true');
     return NextResponse.json({ isMatch });
 

@@ -1369,6 +1369,7 @@ const ChatView = ({
   isDepositor,
   clearActiveRoom,
   setOtpGeneratedAt,
+  mqttPublish,
 }: {
   setView: (view: ViewType) => void;
   selectedLocker: Locker | null;
@@ -1382,6 +1383,7 @@ const ChatView = ({
   isDepositor: boolean;
   clearActiveRoom: () => void;
   setOtpGeneratedAt: (date: Date | null) => void;
+  mqttPublish?: (topic: string, payload: string) => void;
 }) => {
   const otherUserName = isDepositor 
     ? 'ผู้มารับของ' 
@@ -1425,6 +1427,12 @@ const ChatView = ({
         // Generate a new OTP since it's not set
         const generatedOtp = Math.floor(100000 + Math.random() * 900000);
         otpToSend = String(generatedOtp);
+
+        // Publish the generated OTP to command topic
+        const lockerId = chatRoom?.locker_id || selectedLocker?.id;
+        if (lockerId) {
+          mqttPublish?.(`lostreturn/locker/${lockerId}/command`, JSON.stringify({ otp: otpToSend }));
+        }
 
         // Update database with generated OTP and generation timestamp
         await supabase
@@ -2726,6 +2734,9 @@ function SmartLockerContent() {
 
       if (data.isMatch) {
         const generatedOtp = Math.floor(100000 + Math.random() * 900000);
+        if (selectedLocker) {
+          mqttPublish(`lostreturn/locker/${selectedLocker.id}/command`, JSON.stringify({ otp: String(generatedOtp) }));
+        }
         setLockers(lockers.map(l => 
           l.id === selectedLocker.id && l.item
             ? { ...l, item: { ...l.item, otp: generatedOtp } }
@@ -2826,6 +2837,7 @@ function SmartLockerContent() {
         isDepositor={chatIsDepositor}
         clearActiveRoom={clearActiveRoom}
         setOtpGeneratedAt={setOtpGeneratedAt}
+        mqttPublish={mqttPublish}
       />
     );
   }

@@ -216,6 +216,30 @@ export type Database = {
           },
         ]
       }
+      lockers: {
+        Row: {
+          door_state: string | null
+          has_item: boolean | null
+          id: number
+          solenoid: string | null
+          updated_at: string
+        }
+        Insert: {
+          door_state?: string | null
+          has_item?: boolean | null
+          id: number
+          solenoid?: string | null
+          updated_at?: string
+        }
+        Update: {
+          door_state?: string | null
+          has_item?: boolean | null
+          id?: number
+          solenoid?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       locker_transactions: {
         Row: {
           collected_at: string | null
