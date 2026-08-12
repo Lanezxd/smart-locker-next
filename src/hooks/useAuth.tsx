@@ -56,36 +56,42 @@ export const useAuth = () => {
       .from('profiles')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error('Error fetching profile:', error);
+      if (error.code !== 'PGRST116') {
+        console.error('Error fetching profile:', error);
+      }
+      setProfile(null);
       return;
     }
     
-    setProfile(data);
+    setProfile(data ?? null);
   };
 
-  const signUp = async (email: string, password: string, metadata?: { username?: string; full_name?: string }) => {
+  const signUp = async (email: string, password: string) => {
     const redirectUrl = `${window.location.origin}/`;
     
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: redirectUrl,
-        data: metadata
+        emailRedirectTo: redirectUrl
       }
     });
 
     if (error) {
-      toast.error(error.message === 'User already registered' 
+      toast.error(error.message === 'User already registered' || error.message.includes('already registered')
         ? 'อีเมลนี้ถูกใช้งานแล้ว' 
         : error.message);
-      return { error };
+      return { data: null, error };
     }
 
-    toast.success('สมัครสมาชิกสำเร็จ! ยินดีต้อนรับ');
+    if (data?.user && data.user.identities && data.user.identities.length === 0) {
+      toast.error('อีเมลนี้ถูกใช้งานแล้ว');
+      return { data, error: new Error('User already registered') };
+    }
+
     return { data, error: null };
   };
 
@@ -136,6 +142,41 @@ export const useAuth = () => {
     return { data, error: null };
   };
 
+  const verifyOtp = async (email: string, token: string, type: 'signup' | 'email' = 'signup') => {
+    const { data, error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type
+    });
+
+    if (error) {
+      return { error };
+    }
+
+    if (data.session) {
+      setSession(data.session);
+      setUser(data.user);
+      if (data.user) {
+        await fetchProfile(data.user.id);
+      }
+    }
+
+    return { data, error: null };
+  };
+
+  const resendOtp = async (email: string, type: 'signup' | 'email_change' = 'signup') => {
+    const { data, error } = await supabase.auth.resend({
+      type,
+      email
+    });
+
+    if (error) {
+      return { error };
+    }
+
+    return { data, error: null };
+  };
+
   return {
     user,
     session,
@@ -144,7 +185,10 @@ export const useAuth = () => {
     signUp,
     signIn,
     signOut,
+    verifyOtp,
+    resendOtp,
     updateProfile,
     refreshProfile: () => user && fetchProfile(user.id)
   };
 };
+

@@ -13,6 +13,7 @@ import { generateOTP } from "@/lib/locker-data";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useLockerTransactions } from "@/hooks/useLockerTransactions";
+import { useAuth } from "@/hooks/useAuth";
 
 interface CollectModalProps {
   locker: Locker | null;
@@ -26,6 +27,7 @@ type CollectStep = 'security' | 'verifying' | 'otp' | 'chat' | 'success';
 
 export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId }: CollectModalProps) {
   const MAX_ATTEMPTS = 3;
+  const { user, profile } = useAuth();
   const [step, setStep] = useState<CollectStep>('security');
   const [userAnswer, setUserAnswer] = useState('');
   const [otp, setOtp] = useState('');
@@ -219,14 +221,21 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
 
       try {
         if (transactionId) {
-          // 1. Update Supabase with matched OTP, timestamp, status and collected_at
+          const collectorUserId = user?.id || null;
+          const collectorName = profile?.full_name || profile?.username || (user?.email ? user.email.split('@')[0] : null);
+          const collectorContact = profile?.phone || user?.email || null;
+
+          // 1. Update Supabase with matched OTP, timestamp, status, collected_at, and collector identity
           const { error: updateError } = await supabase
             .from('locker_transactions')
             .update({
               otp: otp,
-              otp_generated_at: otpGeneratedAt?.toISOString(),
+              otp_generated_at: otpGeneratedAt?.toISOString() || new Date().toISOString(),
               status: 'collected',
-              collected_at: new Date().toISOString()
+              collected_at: new Date().toISOString(),
+              collector_user_id: collectorUserId,
+              collector_name: collectorName,
+              collector_contact: collectorContact
             })
             .eq('id', transactionId);
 

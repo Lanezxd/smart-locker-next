@@ -17,6 +17,9 @@ export interface LockerTransaction {
   user_id: string | null;
   deposited_at: string;
   collected_at: string | null;
+  collector_user_id?: string | null;
+  collector_name?: string | null;
+  collector_contact?: string | null;
   status: string;
   created_at: string;
   image_url: string | null;

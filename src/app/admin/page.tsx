@@ -55,7 +55,7 @@ interface AdminMessage {
 
 const AdminDashboardPage = () => {
   const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const { isAdmin, loading: adminLoading } = useAdmin(user?.id);
   const [activeTab, setActiveTab] = useState<TabType>('lockers');
   const [reports, setReports] = useState<Report[]>([]);
@@ -129,15 +129,54 @@ const AdminDashboardPage = () => {
 
   const handleUnlockLocker = async (transactionId: string) => {
     setActionLoading(transactionId);
-    const { error } = await supabase.rpc('mark_transaction_collected', { p_transaction_id: transactionId });
-    if (error) { toast.error('ไม่สามารถปลดล็อกตู้ได้'); } else { toast.success('ปลดล็อกตู้สำเร็จ!'); fetchTransactions(); }
+    const adminName = profile?.full_name 
+      ? `${profile.full_name} (Admin Override)` 
+      : profile?.username 
+      ? `${profile.username} (Admin Override)` 
+      : 'Admin (Admin Override)';
+    const adminContact = profile?.phone || user?.email || 'Admin Support';
+
+    const { error } = await supabase
+      .from('locker_transactions')
+      .update({
+        status: 'collected',
+        collected_at: new Date().toISOString(),
+        collector_user_id: user?.id || null,
+        collector_name: adminName,
+        collector_contact: adminContact
+      })
+      .eq('id', transactionId);
+
+    if (error) { 
+      toast.error('ไม่สามารถปลดล็อกตู้ได้'); 
+    } else { 
+      toast.success('ปลดล็อกตู้สำเร็จ!'); 
+      fetchTransactions(); 
+    }
     setActionLoading(null);
   };
 
   const handleAdminDirectUnlock = async (transactionId: string, lockerId: number) => {
     setActionLoading(transactionId);
     try {
-      const { error: dbError } = await supabase.rpc('mark_transaction_collected', { p_transaction_id: transactionId });
+      const adminName = profile?.full_name 
+        ? `${profile.full_name} (Admin Override)` 
+        : profile?.username 
+        ? `${profile.username} (Admin Override)` 
+        : 'Admin (Admin Override)';
+      const adminContact = profile?.phone || user?.email || 'Admin Support';
+
+      const { error: dbError } = await supabase
+        .from('locker_transactions')
+        .update({
+          status: 'collected',
+          collected_at: new Date().toISOString(),
+          collector_user_id: user?.id || null,
+          collector_name: adminName,
+          collector_contact: adminContact
+        })
+        .eq('id', transactionId);
+
       if (dbError) {
         toast.error('ไม่สามารถปลดล็อกตู้ได้');
         setActionLoading(null);

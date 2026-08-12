@@ -1,5 +1,5 @@
 'use client';
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Package, Send, CheckCircle, ShieldQuestion } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Locker, SecurityQuestion } from "@/types/locker";
 import { generateOTP } from "@/lib/locker-data";
 import { toast } from "sonner";
 import { useLockerTransactions } from "@/hooks/useLockerTransactions";
+import { useAuth } from "@/hooks/useAuth";
 
 interface DepositModalProps {
   locker: Locker | null;
@@ -28,6 +29,7 @@ export interface DepositFormData {
 }
 
 export function DepositModal({ locker, isOpen, onClose, onDeposit, userId }: DepositModalProps) {
+  const { user, profile } = useAuth();
   const [step, setStep] = useState<'form' | 'security' | 'otp'>('form');
   const [formData, setFormData] = useState<DepositFormData>({
     itemDescription: '',
@@ -40,6 +42,16 @@ export function DepositModal({ locker, isOpen, onClose, onDeposit, userId }: Dep
   });
   const [generatedOTP, setGeneratedOTP] = useState('');
   const { createDeposit } = useLockerTransactions();
+
+  useEffect(() => {
+    if (isOpen && !formData.depositorContact) {
+      setFormData(prev => ({
+        ...prev,
+        depositorName: prev.depositorName || profile?.full_name || profile?.username || user?.email?.split('@')[0] || '',
+        depositorContact: prev.depositorContact || profile?.phone || user?.email || '',
+      }));
+    }
+  }, [isOpen, profile, user]);
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,15 +74,15 @@ export function DepositModal({ locker, isOpen, onClose, onDeposit, userId }: Dep
 
     if (locker) {
       try {
-        // Save to database (otp and otp_generated_at left blank/NULL)
+        const depositorContact = formData.depositorContact || profile?.phone || user?.email || '';
         await createDeposit({
           locker_id: locker.id,
           item_description: formData.itemDescription,
           depositor_name: formData.depositorName,
-          depositor_contact: formData.depositorContact,
+          depositor_contact: depositorContact,
           security_question: formData.securityQuestion.question,
           security_answer: formData.securityQuestion.answer,
-          user_id: userId
+          user_id: userId || user?.id
         });
         
         onDeposit(locker.id, formData, '');

@@ -243,6 +243,9 @@ export type Database = {
       locker_transactions: {
         Row: {
           collected_at: string | null
+          collector_contact: string | null
+          collector_name: string | null
+          collector_user_id: string | null
           created_at: string
           deposited_at: string
           depositor_contact: string
@@ -260,6 +263,9 @@ export type Database = {
         }
         Insert: {
           collected_at?: string | null
+          collector_contact?: string | null
+          collector_name?: string | null
+          collector_user_id?: string | null
           created_at?: string
           deposited_at?: string
           depositor_contact: string
@@ -277,6 +283,9 @@ export type Database = {
         }
         Update: {
           collected_at?: string | null
+          collector_contact?: string | null
+          collector_name?: string | null
+          collector_user_id?: string | null
           created_at?: string
           deposited_at?: string
           depositor_contact?: string

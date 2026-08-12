@@ -65,7 +65,7 @@ export const usePosts = () => {
     if (!user) { toast.error('กรุณาเข้าสู่ระบบก่อนสร้างโพสต์'); return { error: new Error('Not authenticated') }; }
     const { data, error } = await supabase.from('posts').insert({ user_id: user.id, ...postData }).select('*').single();
     if (error) { toast.error('ไม่สามารถสร้างโพสต์ได้'); return { error }; }
-    const { data: profileData } = await supabase.from('profiles').select('user_id, username, full_name, avatar_url').eq('user_id', user.id).single();
+    const { data: profileData } = await supabase.from('profiles').select('user_id, username, full_name, avatar_url').eq('user_id', user.id).maybeSingle();
     setPosts(prev => [{ ...data, profiles: profileData || null } as Post, ...prev]);
     toast.success('สร้างโพสต์สำเร็จ!');
     return { data, error: null };

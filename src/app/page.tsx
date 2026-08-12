@@ -33,15 +33,17 @@ import {
   Sparkles,
   Box,
   KeyRound,
-  Hash,
-  CreditCard,
   ImageIcon,
   Copy,
   Check,
   Clock,
   MapPin,
-  History
+  History,
+  MailCheck,
+  RotateCw
 } from 'lucide-react';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
+import { REGEXP_ONLY_DIGITS } from 'input-otp';
 import { FeedHeader } from '@/components/feed/FeedHeader';
 import { StickyActionBar } from '@/components/feed/StickyActionBar';
 import { SocialFeed } from '@/components/feed/SocialFeed';
@@ -72,6 +74,7 @@ interface Locker {
 }
 
 interface UserData {
+  id?: string;
   name: string;
   type: 'student' | 'general';
   email: string;
@@ -176,17 +179,30 @@ const Header = ({
 // Auth Form Component
 const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
   const [isRegister, setIsRegister] = useState(false);
-  const [userType, setUserType] = useState<'student' | 'general'>('student');
+  const [step, setStep] = useState<'form' | 'otp'>('form');
   const [loading, setLoading] = useState(false);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const [formData, setFormData] = useState({
     email: '',
     password: '',
     name: '',
-    studentId: '',
-    nationalId: '',
     phone: ''
   });
+
+  // Countdown timer for OTP resend cooldown
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -194,17 +210,16 @@ const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
 
     try {
       if (isRegister) {
-        // Sign up
-        const metadata: Record<string, string> = {
-          username: formData.name || formData.email.split('@')[0],
-          full_name: formData.name,
-          user_type: userType,
-          phone: formData.phone,
-        };
-        if (userType === 'student') {
-          metadata.student_id = formData.studentId;
-        } else {
-          metadata.national_id = formData.nationalId;
+        // Sign up validation
+        if (!formData.name.trim()) {
+          toast.error('กรุณากรอกชื่อ-นามสกุล');
+          setLoading(false);
+          return;
+        }
+        if (!formData.phone.trim()) {
+          toast.error('กรุณากรอกเบอร์โทร');
+          setLoading(false);
+          return;
         }
 
         const { data, error } = await supabase.auth.signUp({
@@ -212,30 +227,30 @@ const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
           password: formData.password,
           options: {
             emailRedirectTo: `${window.location.origin}/`,
-            data: metadata
           }
         });
 
         if (error) {
-          toast.error(error.message === 'User already registered' 
+          toast.error(error.message.includes('already registered') || error.message === 'User already registered' 
             ? 'อีเมลนี้ถูกใช้งานแล้ว' 
             : error.message);
           setLoading(false);
           return;
         }
 
-        if (data.user) {
-          toast.success('สมัครสมาชิกสำเร็จ! ยินดีต้อนรับ');
-          const mockUser: UserData = {
-            name: formData.name || formData.email.split('@')[0],
-            type: userType,
-            email: formData.email,
-            phone: formData.phone || '',
-            studentId: formData.studentId || '',
-            profileImage: null
-          };
-          onLogin(mockUser);
+        // Check if user already exists (Supabase Email Enumeration Protection)
+        if (data?.user && data.user.identities && data.user.identities.length === 0) {
+          toast.error('อีเมลนี้ถูกใช้งานแล้ว');
+          setLoading(false);
+          return;
         }
+
+        // On success, transition to OTP step (do NOT close the modal)
+        setStep('otp');
+        setOtpCode('');
+        setOtpError('');
+        setResendCooldown(60);
+        toast.success(`ส่งรหัส OTP 6 หลักไปที่ ${formData.email} แล้ว`);
       } else {
         // Sign in
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -257,11 +272,11 @@ const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
             .from('profiles')
             .select('*')
             .eq('user_id', data.user.id)
-            .single();
+            .maybeSingle();
 
           const mockUser: UserData = {
             name: profile?.full_name || profile?.username || data.user.email?.split('@')[0] || 'User',
-            type: userType,
+            type: 'general',
             email: data.user.email || '',
             phone: profile?.phone || '',
             studentId: '',
@@ -278,161 +293,311 @@ const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
     }
   };
 
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (otpCode.length !== 6) {
+      setOtpError('กรุณากรอกรหัส OTP ให้ครบ 6 หลัก');
+      return;
+    }
+
+    setOtpLoading(true);
+    setOtpError('');
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: formData.email,
+        token: otpCode.trim(),
+        type: 'signup'
+      });
+
+      if (error) {
+        setOtpError('รหัส OTP ไม่ถูกต้องหรือหมดอายุ');
+        setOtpLoading(false);
+        return;
+      }
+
+      const authUser = data.user || data.session?.user;
+      if (authUser) {
+        // Upsert user profile metadata into database
+        const profileData = {
+          user_id: authUser.id,
+          username: formData.name || formData.email.split('@')[0],
+          full_name: formData.name,
+          phone: formData.phone || null,
+          updated_at: new Date().toISOString()
+        };
+
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .upsert(profileData, { onConflict: 'user_id' });
+
+        if (profileError) {
+          console.warn('Profile upsert note:', profileError);
+        }
+
+        toast.success('ยืนยันอีเมลและสมัครสมาชิกสำเร็จ! ยินดีต้อนรับ');
+
+        const mockUser: UserData = {
+          name: formData.name || formData.email.split('@')[0],
+          type: 'general',
+          email: formData.email,
+          phone: formData.phone || '',
+          studentId: '',
+          profileImage: null
+        };
+        onLogin(mockUser);
+      }
+    } catch {
+      setOtpError('เกิดข้อผิดพลาดในการยืนยัน OTP กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || resending) return;
+    setResending(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: formData.email
+      });
+
+      if (error) {
+        // Fallback to signUp if resend returns error
+        const { error: signUpError } = await supabase.auth.signUp({
+          email: formData.email,
+          password: formData.password
+        });
+        if (signUpError) {
+          toast.error(signUpError.message);
+          setResending(false);
+          return;
+        }
+      }
+
+      toast.success(`ส่งรหัส OTP ใหม่ไปยัง ${formData.email} แล้ว`);
+      setResendCooldown(60);
+    } catch (err) {
+      console.error('Resend OTP error:', err);
+      toast.error('ไม่สามารถส่งรหัส OTP ได้ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setResending(false);
+    }
+  };
+
+  const handleBackToForm = () => {
+    setStep('form');
+    setOtpCode('');
+    setOtpError('');
+  };
+
   return (
     <div className="w-full max-w-md mx-auto bg-card rounded-3xl p-6 shadow-xl border border-border">
-      {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-secondary rounded-xl mb-6">
-        <button
-          onClick={() => setIsRegister(false)}
-          className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${!isRegister ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-        >
-          เข้าสู่ระบบ
-        </button>
-        <button
-          onClick={() => setIsRegister(true)}
-          className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${isRegister ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-        >
-          ลงทะเบียน
-        </button>
-      </div>
+      {/* OTP Step View */}
+      {step === 'otp' ? (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="text-center">
+            <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-3 text-primary shadow-inner">
+              <MailCheck className="w-7 h-7" />
+            </div>
+            <h2 className="text-xl font-bold text-foreground">ยืนยันอีเมลของคุณ</h2>
+            <p className="text-sm text-muted-foreground mt-1.5 px-2">
+              ส่งรหัส OTP 6 หลักไปที่{' '}
+              <span className="font-semibold text-foreground bg-secondary px-2 py-0.5 rounded-md break-all">
+                {formData.email}
+              </span>{' '}
+              แล้ว
+            </p>
+          </div>
 
-      <h2 className="text-xl font-bold text-foreground mb-1">
-        {isRegister ? 'สร้างบัญชีใหม่' : 'ยินดีต้อนรับกลับ'}
-      </h2>
-      <p className="text-sm text-muted-foreground mb-6">
-        {isRegister ? 'กรอกข้อมูลเพื่อเริ่มต้นใช้งาน' : 'กรุณาเข้าสู่ระบบเพื่อดำเนินการต่อ'}
-      </p>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {isRegister && (
-          <>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setUserType('student')}
-                className={`flex-1 flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all gap-2 ${
-                  userType === 'student' 
-                    ? 'border-primary bg-primary/10 text-primary' 
-                    : 'border-border hover:border-muted-foreground text-muted-foreground'
-                }`}
+          {/* OTP Verification Form */}
+          <form onSubmit={handleVerifyOtp} className="space-y-5">
+            <div className="flex justify-center my-2">
+              <InputOTP
+                maxLength={6}
+                value={otpCode}
+                onChange={(val) => {
+                  setOtpCode(val);
+                  setOtpError('');
+                }}
+                pattern={REGEXP_ONLY_DIGITS}
+                autoFocus
               >
-                <GraduationCap className="w-6 h-6" />
-                <span className="text-sm font-medium">นักศึกษา</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setUserType('general')}
-                className={`flex-1 flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all gap-2 ${
-                  userType === 'general' 
-                    ? 'border-accent bg-accent/10 text-accent' 
-                    : 'border-border hover:border-muted-foreground text-muted-foreground'
-                }`}
-              >
-                <Users className="w-6 h-6" />
-                <span className="text-sm font-medium">บุคคลทั่วไป</span>
-              </button>
+                <InputOTPGroup className="gap-2 sm:gap-2.5">
+                  <InputOTPSlot index={0} className="w-11 h-13 sm:w-12 sm:h-14 text-xl font-bold rounded-xl border-2 border-border bg-secondary/40 focus:border-primary data-[active=true]:border-primary data-[active=true]:ring-2 data-[active=true]:ring-primary/20" />
+                  <InputOTPSlot index={1} className="w-11 h-13 sm:w-12 sm:h-14 text-xl font-bold rounded-xl border-2 border-border bg-secondary/40 focus:border-primary data-[active=true]:border-primary data-[active=true]:ring-2 data-[active=true]:ring-primary/20" />
+                  <InputOTPSlot index={2} className="w-11 h-13 sm:w-12 sm:h-14 text-xl font-bold rounded-xl border-2 border-border bg-secondary/40 focus:border-primary data-[active=true]:border-primary data-[active=true]:ring-2 data-[active=true]:ring-primary/20" />
+                  <InputOTPSlot index={3} className="w-11 h-13 sm:w-12 sm:h-14 text-xl font-bold rounded-xl border-2 border-border bg-secondary/40 focus:border-primary data-[active=true]:border-primary data-[active=true]:ring-2 data-[active=true]:ring-primary/20" />
+                  <InputOTPSlot index={4} className="w-11 h-13 sm:w-12 sm:h-14 text-xl font-bold rounded-xl border-2 border-border bg-secondary/40 focus:border-primary data-[active=true]:border-primary data-[active=true]:ring-2 data-[active=true]:ring-primary/20" />
+                  <InputOTPSlot index={5} className="w-11 h-13 sm:w-12 sm:h-14 text-xl font-bold rounded-xl border-2 border-border bg-secondary/40 focus:border-primary data-[active=true]:border-primary data-[active=true]:ring-2 data-[active=true]:ring-primary/20" />
+                </InputOTPGroup>
+              </InputOTP>
             </div>
 
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="ชื่อ-นามสกุล"
-                className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-                value={formData.name}
-                onChange={(e) => setFormData({...formData, name: e.target.value})}
-                required
-              />
-            </div>
-
-            {userType === 'student' ? (
-              <div className="relative">
-                <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="รหัสนักศึกษา"
-                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-                  value={formData.studentId}
-                  onChange={(e) => setFormData({...formData, studentId: e.target.value})}
-                  required
-                />
-              </div>
-            ) : (
-              <div className="relative">
-                <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="รหัสบัตรประชาชน 13 หลัก"
-                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-                  value={formData.nationalId}
-                  onChange={(e) => setFormData({...formData, nationalId: e.target.value})}
-                  required
-                  maxLength={13}
-                />
+            {otpError && (
+              <div className="flex items-center justify-center gap-1.5 text-destructive text-sm font-medium">
+                <AlertCircle className="w-4 h-4" />
+                <span>{otpError}</span>
               </div>
             )}
 
+            {/* Primary Button */}
+            <button
+              type="submit"
+              disabled={otpLoading || otpCode.length !== 6}
+              className="w-full gradient-primary text-primary-foreground font-bold py-3.5 rounded-xl shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-base cursor-pointer"
+            >
+              {otpLoading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <>
+                  <span>ยืนยันรหัส OTP</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+
+            {/* Secondary Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-sm">
+              <button
+                type="button"
+                onClick={handleBackToForm}
+                className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors font-medium cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span>ย้อนกลับไปแก้ไขข้อมูล</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResendOtp}
+                disabled={resendCooldown > 0 || resending}
+                className="flex items-center gap-1.5 text-primary hover:underline font-semibold disabled:text-muted-foreground disabled:no-underline disabled:cursor-not-allowed cursor-pointer"
+              >
+                {resending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RotateCw className={`w-3.5 h-3.5 ${resendCooldown > 0 ? '' : 'animate-none'}`} />
+                )}
+                <span>
+                  {resendCooldown > 0 ? `ส่งรหัสอีกครั้ง (${resendCooldown}s)` : 'ส่งรหัสอีกครั้ง'}
+                </span>
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : (
+        /* Login / Register Form View */
+        <>
+          {/* Tabs */}
+          <div className="flex gap-2 p-1 bg-secondary rounded-xl mb-6">
+            <button
+              onClick={() => {
+                setIsRegister(false);
+                setStep('form');
+              }}
+              className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${!isRegister ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              เข้าสู่ระบบ
+            </button>
+            <button
+              onClick={() => {
+                setIsRegister(true);
+                setStep('form');
+              }}
+              className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${isRegister ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              ลงทะเบียน
+            </button>
+          </div>
+
+          <h2 className="text-xl font-bold text-foreground mb-1">
+            {isRegister ? 'สร้างบัญชีใหม่' : 'ยินดีต้อนรับกลับ'}
+          </h2>
+          <p className="text-sm text-muted-foreground mb-6">
+            {isRegister ? 'กรอกข้อมูลเพื่อเริ่มต้นใช้งาน' : 'กรุณาเข้าสู่ระบบเพื่อดำเนินการต่อ'}
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {isRegister && (
+              <>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="ชื่อ-นามสกุล"
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
+                    value={formData.name}
+                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    required
+                  />
+                </div>
+
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <input
+                    type="tel"
+                    placeholder="เบอร์โทร"
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({...formData, phone: e.target.value.replace(/\D/g, '').slice(0, 10)})}
+                    required
+                  />
+                </div>
+              </>
+            )}
+
             <div className="relative">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <input
-                type="tel"
-                placeholder="เบอร์โทร"
+                type="email"
+                placeholder="อีเมล"
                 className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-                value={formData.phone}
-                onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                value={formData.email}
+                onChange={(e) => setFormData({...formData, email: e.target.value})}
                 required
               />
             </div>
-          </>
-        )}
 
-        <div className="relative">
-          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="email"
-            placeholder="อีเมล"
-            className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-            value={formData.email}
-            onChange={(e) => setFormData({...formData, email: e.target.value})}
-            required
-          />
-        </div>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type={showPassword ? "text" : "password"}
+                placeholder="รหัสผ่าน"
+                className="w-full pl-10 pr-10 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
+                value={formData.password}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                required
+                minLength={6}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
 
-        <div className="relative">
-          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type={showPassword ? "text" : "password"}
-            placeholder="รหัสผ่าน"
-            className="w-full pl-10 pr-10 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all"
-            value={formData.password}
-            onChange={(e) => setFormData({...formData, password: e.target.value})}
-            required
-            minLength={6}
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full gradient-primary text-primary-foreground font-bold py-3.5 rounded-xl shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
-            <>
-              {isRegister ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ'}
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
-        </button>
-      </form>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full gradient-primary text-primary-foreground font-bold py-3.5 rounded-xl shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+            >
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <>
+                  {isRegister ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ'}
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </form>
+        </>
+      )}
     </div>
   );
 };
@@ -576,6 +741,7 @@ const DashboardView = ({
   handleGoHome,
   setLockers,
   currentUser,
+  currentUserId,
   onLoginRequired,
   markAsCollected,
   mqttPublish,
@@ -592,6 +758,7 @@ const DashboardView = ({
   handleGoHome: () => void;
   setLockers: (lockers: Locker[]) => void;
   currentUser: UserData | null;
+  currentUserId?: string;
   onLoginRequired: () => void;
   markAsCollected: (transactionId: string) => Promise<boolean>;
   mqttPublish?: (topic: string, payload: string) => void;
@@ -677,14 +844,21 @@ const DashboardView = ({
         return;
       }
 
-      // Update Supabase transaction: save successfully matched OTP, otp_generated_at, collected_at, and status
+      const collectorUserId = currentUserId || currentUser?.id || null;
+      const collectorName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : null);
+      const collectorContact = currentUser?.phone || currentUser?.email || null;
+
+      // Update Supabase transaction: save successfully matched OTP, otp_generated_at, collected_at, status, and collector details
       const { error: updateError } = await supabase
         .from('locker_transactions')
         .update({
           otp: enteredOtp,
           otp_generated_at: otpGeneratedAt ? otpGeneratedAt.toISOString() : new Date().toISOString(),
           status: 'collected',
-          collected_at: new Date().toISOString()
+          collected_at: new Date().toISOString(),
+          collector_user_id: collectorUserId,
+          collector_name: collectorName,
+          collector_contact: collectorContact
         })
         .eq('id', transactionId);
 
@@ -1724,6 +1898,8 @@ const OtpView = ({
   otpTimeLeft,
   otpGeneratedAt,
   mqttPublish,
+  currentUser,
+  currentUserId,
 }: {
   otp: number;
   selectedLocker: Locker | null;
@@ -1735,6 +1911,8 @@ const OtpView = ({
   otpTimeLeft: number;
   otpGeneratedAt: Date | null;
   mqttPublish?: (topic: string, payload: string) => void;
+  currentUser: UserData | null;
+  currentUserId?: string;
 }) => {
   const [otpInput, setOtpInput] = useState(['', '', '', '', '', '']);
   const [isUnlocking, setIsUnlocking] = useState(false);
@@ -1818,6 +1996,10 @@ const OtpView = ({
 
     if (otpMatch) {
       if (transactionId) {
+        const collectorUserId = currentUserId || currentUser?.id || null;
+        const collectorName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : null);
+        const collectorContact = currentUser?.phone || currentUser?.email || null;
+
         // Save to Supabase table
         const { error: updateError } = await supabase
           .from('locker_transactions')
@@ -1825,7 +2007,10 @@ const OtpView = ({
             otp: enteredOtp,
             otp_generated_at: otpGeneratedAt ? otpGeneratedAt.toISOString() : new Date().toISOString(),
             status: 'collected',
-            collected_at: new Date().toISOString()
+            collected_at: new Date().toISOString(),
+            collector_user_id: collectorUserId,
+            collector_name: collectorName,
+            collector_contact: collectorContact
           })
           .eq('id', transactionId);
         if (updateError) console.error('Error updating OTP:', updateError);
@@ -2605,6 +2790,7 @@ function SmartLockerContent() {
 
     if (user) {
       const updated: UserData = {
+          id: user.id,
           name: profile?.full_name || profile?.username || user.email?.split('@')[0] || 'ผู้ใช้',
           type: 'general',
           email: user.email || '',
@@ -2657,7 +2843,7 @@ function SmartLockerContent() {
         locker_id: selectedLocker.id,
         item_description: depositForm.name,
         depositor_name: currentUser?.name || 'Unknown',
-        depositor_contact: currentUser?.email || currentUser?.phone || '',
+        depositor_contact: profile?.phone || currentUser?.phone || user?.email || '',
         security_question: depositForm.question,
         security_answer: depositForm.answer,
         user_id: user?.id,
@@ -2867,6 +3053,8 @@ function SmartLockerContent() {
         otpTimeLeft={otpTimeLeft}
         otpGeneratedAt={otpGeneratedAt}
         mqttPublish={mqttPublish}
+        currentUser={currentUser}
+        currentUserId={user?.id}
       />
     );
   }
@@ -2891,6 +3079,7 @@ function SmartLockerContent() {
           handleGoHome={handleGoHome}
           setLockers={setLockers}
           currentUser={currentUser}
+          currentUserId={user?.id}
           onLoginRequired={() => setShowLoginModal(true)}
           markAsCollected={markAsCollected}
           mqttPublish={mqttPublish}
