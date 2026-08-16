@@ -81,7 +81,7 @@ const DepositModePage = () => {
       const { error } = await supabase.from('locker_transactions').insert({
         locker_id: selectedLocker.id,
         item_description: itemDescription.trim(),
-        depositor_name: profile?.full_name || profile?.username || user?.email?.split('@')[0] || 'ไม่ระบุ',
+        depositor_name: profile?.username || profile?.full_name || user?.email?.split('@')[0] || 'ไม่ระบุ',
         depositor_contact: profile?.phone || user?.email || '',
         security_question: securityQuestion.trim(),
         security_answer: securityAnswer.trim().toLowerCase(),

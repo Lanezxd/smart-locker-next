@@ -20,8 +20,10 @@ export const useComments = (postId: string) => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchComments = useCallback(async () => {
-    setLoading(true);
+  const fetchComments = useCallback(async (isSilent = false) => {
+    if (!isSilent) {
+      setLoading(prev => comments.length === 0 ? true : prev);
+    }
     const { data: commentsData, error } = await supabase.from('comments').select('*').eq('post_id', postId).order('created_at', { ascending: true });
     if (error) { setLoading(false); return; }
     const userIds = [...new Set((commentsData || []).map(c => c.user_id))];
@@ -36,13 +38,13 @@ export const useComments = (postId: string) => {
       setComments([]);
     }
     setLoading(false);
-  }, [postId]);
+  }, [postId, comments.length]);
 
   useEffect(() => {
     if (postId) {
       fetchComments();
       const channel = supabase.channel(`comments-${postId}-${Date.now()}-${Math.random()}`);
-      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}` }, () => { fetchComments(); });
+      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}` }, () => { fetchComments(true); });
       channel.subscribe();
       return () => { supabase.removeChannel(channel); };
     }
@@ -53,7 +55,7 @@ export const useComments = (postId: string) => {
     if (!user) { toast.error('กรุณาเข้าสู่ระบบก่อนแสดงความคิดเห็น'); return { error: new Error('Not authenticated') }; }
     const { data, error } = await supabase.from('comments').insert({ post_id: postId, user_id: user.id, parent_id: parentId || null, content }).select('*').single();
     if (error) { toast.error('ไม่สามารถแสดงความคิดเห็นได้'); return { error }; }
-    await fetchComments();
+    await fetchComments(true);
     toast.success('แสดงความคิดเห็นสำเร็จ');
     return { data, error: null };
   };
@@ -61,7 +63,7 @@ export const useComments = (postId: string) => {
   const deleteComment = async (commentId: string) => {
     const { error } = await supabase.from('comments').delete().eq('id', commentId);
     if (error) { toast.error('ไม่สามารถลบความคิดเห็นได้'); return { error }; }
-    await fetchComments();
+    await fetchComments(true);
     toast.success('ลบความคิดเห็นแล้ว');
     return { error: null };
   };

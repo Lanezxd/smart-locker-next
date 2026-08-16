@@ -1,5 +1,5 @@
-﻿'use client';
-import { Box, Package, Lock, Clock } from "lucide-react";
+'use client';
+import { Box, Package, Lock } from "lucide-react";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Locker } from "@/types/locker";
@@ -19,29 +19,29 @@ export function StatsCards({ lockers }: StatsCardsProps) {
       label: "ช่องทั้งหมด",
       value: total,
       icon: Box,
-      color: "text-foreground",
-      bg: "bg-secondary",
+      color: "text-zinc-800",
+      bg: "bg-zinc-100 border border-zinc-200",
     },
     {
       label: "ช่องว่าง",
       value: empty,
       icon: Box,
-      color: "text-primary",
-      bg: "bg-primary/10",
+      color: "text-emerald-700",
+      bg: "bg-emerald-50 border border-emerald-200 shadow-sm",
     },
     {
       label: "มีของฝาก",
       value: occupied,
       icon: Package,
-      color: "text-warning",
-      bg: "bg-warning/10",
+      color: "text-amber-800",
+      bg: "bg-amber-50 border border-amber-200 shadow-sm",
     },
     {
       label: "ล็อก/ซ่อม",
       value: locked,
       icon: Lock,
-      color: "text-destructive",
-      bg: "bg-destructive/10",
+      color: "text-rose-700",
+      bg: "bg-rose-50 border border-rose-200 shadow-sm",
     },
   ];
 
@@ -50,19 +50,19 @@ export function StatsCards({ lockers }: StatsCardsProps) {
       {stats.map((stat, index) => (
         <motion.div
           key={stat.label}
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: index * 0.1 }}
+          transition={{ duration: 0.3, delay: index * 0.08 }}
         >
-          <Card variant="default" className="overflow-hidden">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className={`p-3 rounded-xl ${stat.bg}`}>
-                  <stat.icon className={`w-5 h-5 ${stat.color}`} />
+          <Card variant="default" className="overflow-hidden backdrop-blur-xl bg-white/85 border border-zinc-200/90 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center gap-3.5">
+                <div className={`p-3 rounded-2xl ${stat.bg}`}>
+                  <stat.icon className={`w-5 h-5 ${stat.color} stroke-[1.8]`} />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">{stat.value}</p>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
+                  <p className="text-2xl font-semibold text-zinc-800 tracking-tight">{stat.value}</p>
+                  <p className="text-xs text-zinc-500 font-normal">{stat.label}</p>
                 </div>
               </div>
             </CardContent>

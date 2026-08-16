@@ -23,7 +23,6 @@ export interface ChatMessageDB {
   is_read?: boolean;
 }
 
-
 export const useChat = (currentUserId: string | undefined) => {
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [messages, setMessages] = useState<ChatMessageDB[]>([]);
@@ -33,10 +32,48 @@ export const useChat = (currentUserId: string | undefined) => {
   
   const activeRoomIdRef = useRef<string | null>(null);
 
+  // Mark a room as read via the server-side API
+  const markRoomAsRead = useCallback(async (roomId: string) => {
+    if (!roomId) {
+      return;
+    }
+    
+    // Update local state immediately for snappy UI
+    setUnreadCounts(prev => ({ ...prev, [roomId]: 0 }));
+    
+    try {
+      const { data: authData } = await supabase.auth.getSession();
+      const session = authData?.session;
+      const effectiveUserId = currentUserId || session?.user?.id;
+
+      if (!effectiveUserId) {
+        console.warn('markRoomAsRead aborted: No currentUserId or session user id');
+        return;
+      }
+
+      await fetch('/api/mark-chat-read', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+        },
+        body: JSON.stringify({
+          roomId,
+          currentUserId: effectiveUserId,
+        }),
+      });
+    } catch (err) {
+      console.warn('Error calling /api/mark-chat-read:', err);
+    }
+  }, [currentUserId]);
+
   const setActiveRoomId = useCallback((roomId: string | null) => {
     activeRoomIdRef.current = roomId;
     setActiveRoomIdState(roomId);
-  }, []);
+    if (roomId) {
+      markRoomAsRead(roomId);
+    }
+  }, [markRoomAsRead]);
 
   const clearActiveRoom = useCallback(() => {
     activeRoomIdRef.current = null;
@@ -58,14 +95,13 @@ export const useChat = (currentUserId: string | undefined) => {
     const counts: { [roomId: string]: number } = {};
 
     for (const room of rooms) {
-      const { data, count, error } = await supabase
+      const { count, error } = await supabase
         .from('chat_messages')
-        .select('*', { count: 'exact' })
+        .select('*', { count: 'exact', head: true })
         .eq('room_id', room.id)
         .neq('sender_id', currentUserId)
         .or('is_read.eq.false,is_read.is.null');
 
-      console.log(`Fetched unread messages raw data for room ${room.id}:`, data);
       if (error) {
         console.error('Error fetching unread counts:', error);
       }
@@ -75,36 +111,6 @@ export const useChat = (currentUserId: string | undefined) => {
 
     setUnreadCounts(counts);
   }, [currentUserId, rooms]);
-
-  // Mark a room as read
-  const markRoomAsRead = useCallback(async (roomId: string) => {
-    if (!currentUserId || !roomId) {
-      console.warn('markRoomAsRead aborted: Missing currentUserId or roomId', { currentUserId, roomId });
-      return;
-    }
-    
-    // Update local state immediately for snappy UI
-    setUnreadCounts(prev => ({ ...prev, [roomId]: 0 }));
-    
-    console.log('Attempting to mark read with payload:', { roomId, currentUserId });
-
-    // Update database
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .update({ is_read: true })
-      .eq('room_id', roomId)
-      .neq('sender_id', currentUserId)
-      .or('is_read.eq.false,is_read.is.null')
-      .select();
-      
-    if (error) {
-      console.error('Error marking messages as read:', error);
-    } else if (data && data.length === 0) {
-      console.log('markRoomAsRead: 0 rows updated (messages were likely already read).');
-    } else {
-      console.log(`Successfully marked ${data?.length} messages as read.`);
-    }
-  }, [currentUserId]);
 
   // Fetch all chat rooms for the current user
   const fetchRooms = useCallback(async () => {
@@ -165,7 +171,7 @@ export const useChat = (currentUserId: string | undefined) => {
     return data;
   };
 
-  // Send a message
+  // Send a message & trigger email notification ONCE inside the form submission
   const sendMessage = async (roomId: string, content: string, messageType: string = 'text') => {
     if (!currentUserId) return null;
 
@@ -186,6 +192,31 @@ export const useChat = (currentUserId: string | undefined) => {
       return null;
     }
 
+    // Trigger notification email ONCE during active submission
+    try {
+      const { data: authData } = await supabase.auth.getSession();
+      const accessToken = authData?.session?.access_token;
+      if (accessToken) {
+        fetch('/api/send-chat-notification', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            roomId,
+            content,
+            messageId: data.id,
+            type: 'locker',
+          }),
+        }).catch((err) => {
+          console.warn('Background notification error:', err);
+        });
+      }
+    } catch (notifErr) {
+      console.warn('Failed to initiate send-chat-notification:', notifErr);
+    }
+
     return data;
   };
 
@@ -194,7 +225,7 @@ export const useChat = (currentUserId: string | undefined) => {
     if (!activeRoomId) return;
 
     fetchMessages(activeRoomId);
-    // Mark as read when opening a room
+    // Mark as read immediately upon opening a room
     markRoomAsRead(activeRoomId);
 
     const channel = supabase.channel(`chat-messages-${activeRoomId}-${Date.now()}-${Math.random()}`);
@@ -209,7 +240,7 @@ export const useChat = (currentUserId: string | undefined) => {
       (payload) => {
         const newMsg = payload.new as ChatMessageDB;
         setMessages((prev) => [...prev, newMsg]);
-        // Auto-mark as read since user is viewing this room
+        // Auto-mark as read via server API since user is actively viewing this room
         if (currentUserId && newMsg.sender_id !== currentUserId) {
           markRoomAsRead(activeRoomId);
         }
@@ -255,11 +286,8 @@ export const useChat = (currentUserId: string | undefined) => {
   // Listen for new messages across all rooms to update unread counts
   useEffect(() => {
     if (!currentUserId) {
-      console.log('Global real-time listener skipped: No currentUserId');
       return;
     }
-
-    console.log('Initializing global real-time listener for user:', currentUserId);
 
     const channel = supabase.channel(`chat-unread-global-${Date.now()}-${Math.random()}`);
     channel.on(
@@ -270,38 +298,26 @@ export const useChat = (currentUserId: string | undefined) => {
         table: 'chat_messages',
       },
       (payload) => {
-        console.log('Real-time event received!', payload);
         const msg = payload.new as ChatMessageDB;
         const isNotSender = msg.sender_id !== currentUserId;
-        console.log('Passes sender check (sender_id !== currentUserId):', isNotSender, { sender_id: msg.sender_id, currentUserId });
         
-        // If message is not from current user and not in the active room, increment unread
+        // If message is not from current user and in the active room, mark as read
         if (isNotSender) {
           if (msg.room_id === activeRoomIdRef.current) {
-            console.log('Message is in active room, marking as read');
-            // Already viewing this room, mark as read
             markRoomAsRead(msg.room_id);
           } else {
-            console.log('Message is NOT in active room, incrementing unread count for room:', msg.room_id);
-            setUnreadCounts(prev => {
-              const newCount = (prev[msg.room_id] || 0) + 1;
-              console.log(`Updating unread count for room ${msg.room_id} to: ${newCount}`);
-              return {
-                ...prev,
-                [msg.room_id]: newCount
-              };
-            });
+            setUnreadCounts(prev => ({
+              ...prev,
+              [msg.room_id]: (prev[msg.room_id] || 0) + 1,
+            }));
           }
         }
       }
     );
     
-    channel.subscribe((status) => {
-      console.log('Global real-time subscription status:', status);
-    });
+    channel.subscribe();
 
     return () => {
-      console.log('Removing global real-time listener');
       supabase.removeChannel(channel);
     };
   }, [currentUserId, markRoomAsRead]);

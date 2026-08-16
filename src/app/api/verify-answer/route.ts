@@ -33,7 +33,7 @@ export async function POST(req: Request) {
 
     let text = 'false';
     try {
-      // เรียกใช้โมเดลของ Groq (เลือก llama-3.3-70b-versatile ที่ฉลาดและฟรีโควตาสูง)
+      // เรียกใช้โมเดลของ Groq (openai/gpt-oss-120b)
       const chatCompletion = await groq.chat.completions.create({
         messages: [
           {
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
             content: prompt,
           },
         ],
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-120b',
         temperature: 0.1, // ตั้งค่าต่ำเพื่อให้ผลลัพธ์เป็นคำว่า true/false นิ่ง ๆ แม่นยำ
       });
 

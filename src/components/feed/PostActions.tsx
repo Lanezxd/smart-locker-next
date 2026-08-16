@@ -19,13 +19,13 @@ interface PostActionsProps {
 export const PostActions = ({ 
   postId, 
   postUserId, 
-  currentUserId,
+  currentUserId, 
   isAdmin = false,
   isOpen, 
-  onClose,
-  onEdit,
-  onDelete,
-  onBlock
+  onClose, 
+  onEdit, 
+  onDelete, 
+  onBlock 
 }: PostActionsProps) => {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('');
@@ -35,7 +35,6 @@ export const PostActions = ({
   if (!isOpen) return null;
 
   const isOwner = currentUserId === postUserId;
-  const canDelete = isOwner || isAdmin;
 
   const handleDelete = async () => {
     if (!confirm('คุณต้องการลบโพสต์นี้หรือไม่?')) return;
@@ -105,7 +104,7 @@ export const PostActions = ({
       }
     } else {
       toast.success('บล็อกผู้ใช้แล้ว');
-      onBlock?.(); // Call the callback to hide the post immediately
+      onBlock?.();
     }
     setSubmitting(false);
     onClose();
@@ -117,23 +116,23 @@ export const PostActions = ({
       <div className="fixed inset-0 z-40" onClick={onClose} />
       
       {/* Menu */}
-      <div className="absolute right-0 top-8 z-50 bg-card border border-border rounded-xl shadow-xl py-1 min-w-[160px]">
+      <div className="absolute right-0 top-8 z-50 backdrop-blur-2xl bg-white border border-zinc-200 rounded-2xl shadow-xl py-1.5 min-w-[160px]">
         {isOwner ? (
           <>
             <button 
               onClick={onEdit}
-              className="w-full px-4 py-2.5 text-left text-sm hover:bg-secondary transition-colors flex items-center gap-2"
+              className="w-full px-4 py-2.5 text-left text-xs font-medium text-zinc-800 hover:bg-zinc-100 transition-colors flex items-center gap-2 cursor-pointer"
             >
-              <Edit2 className="w-4 h-4" />
-              แก้ไขโพสต์
+              <Edit2 className="w-4 h-4 text-amber-600" />
+              <span>Edit</span>
             </button>
             <button 
               onClick={handleDelete}
               disabled={submitting}
-              className="w-full px-4 py-2.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-2"
+              className="w-full px-4 py-2.5 text-left text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors flex items-center gap-2 cursor-pointer"
             >
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-              ลบโพสต์
+              <span>Delete</span>
             </button>
           </>
         ) : isAdmin ? (
@@ -141,28 +140,28 @@ export const PostActions = ({
             <button 
               onClick={handleDelete}
               disabled={submitting}
-              className="w-full px-4 py-2.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-2"
+              className="w-full px-4 py-2.5 text-left text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors flex items-center gap-2 cursor-pointer"
             >
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-              ลบโพสต์ (Admin)
+              <span>Delete (Admin)</span>
             </button>
           </>
         ) : (
           <>
             <button 
               onClick={() => setShowReportModal(true)}
-              className="w-full px-4 py-2.5 text-left text-sm hover:bg-secondary transition-colors flex items-center gap-2"
+              className="w-full px-4 py-2.5 text-left text-xs font-medium text-zinc-800 hover:bg-zinc-100 transition-colors flex items-center gap-2 cursor-pointer"
             >
-              <Flag className="w-4 h-4" />
-              รายงาน
+              <Flag className="w-4 h-4 text-amber-600" />
+              <span>Report</span>
             </button>
             <button 
               onClick={handleBlock}
               disabled={submitting}
-              className="w-full px-4 py-2.5 text-left text-sm text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-2"
+              className="w-full px-4 py-2.5 text-left text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors flex items-center gap-2 cursor-pointer"
             >
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
-              บล็อกผู้ใช้
+              <span>Block User</span>
             </button>
           </>
         )}
@@ -171,26 +170,26 @@ export const PostActions = ({
       {/* Report Modal */}
       {showReportModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowReportModal(false)} />
-          <div className="relative bg-card rounded-2xl p-6 w-full max-w-md shadow-xl">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowReportModal(false)} />
+          <div className="relative backdrop-blur-2xl bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-zinc-200">
             <button
               onClick={() => setShowReportModal(false)}
-              className="absolute top-4 right-4 p-1 hover:bg-secondary rounded-full transition-colors"
+              className="absolute top-4 right-4 p-1.5 hover:bg-zinc-100 rounded-full transition-colors cursor-pointer text-zinc-500 hover:text-zinc-800"
             >
-              <X className="w-5 h-5 text-muted-foreground" />
+              <X className="w-4 h-4" />
             </button>
             
-            <h3 className="text-lg font-bold text-foreground mb-4">รายงานโพสต์</h3>
+            <h3 className="text-base sm:text-lg font-semibold text-zinc-800 mb-4">รายงานโพสต์</h3>
             
-            <div className="space-y-3 mb-4">
+            <div className="space-y-2 mb-4">
               {['เนื้อหาไม่เหมาะสม', 'สแปมหรือโฆษณา', 'ข้อมูลเท็จ', 'อื่นๆ'].map((reason) => (
                 <button
                   key={reason}
                   onClick={() => setReportReason(reason)}
-                  className={`w-full px-4 py-3 text-left rounded-xl border-2 transition-all ${
+                  className={`w-full px-4 py-2.5 text-left text-xs sm:text-sm font-medium rounded-xl border transition-all cursor-pointer ${
                     reportReason === reason 
-                      ? 'border-primary bg-primary/10 text-primary' 
-                      : 'border-border hover:border-muted-foreground'
+                      ? 'border-amber-400 bg-amber-50 text-amber-800 shadow-sm' 
+                      : 'border-zinc-200 hover:border-zinc-300 text-zinc-700'
                   }`}
                 >
                   {reason}
@@ -204,7 +203,7 @@ export const PostActions = ({
                 value={customReason}
                 onChange={(e) => setCustomReason(e.target.value)}
                 maxLength={500}
-                className="w-full px-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none mb-4"
+                className="w-full px-4 py-2.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 resize-none mb-4 text-xs sm:text-sm shadow-sm transition-all"
                 rows={3}
               />
             )}
@@ -212,10 +211,10 @@ export const PostActions = ({
             <button
               onClick={handleReport}
               disabled={!reportReason || (reportReason === 'อื่นๆ' && !customReason.trim()) || submitting}
-              className="w-full gradient-primary text-primary-foreground font-bold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 font-semibold py-3.5 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 disabled:opacity-40 flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer active:scale-[0.98]"
             >
-              {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Flag className="w-5 h-5" />}
-              ส่งรายงาน
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin text-zinc-900" /> : <Flag className="w-4 h-4 stroke-[2.2]" />}
+              <span>Submit Report</span>
             </button>
           </div>
         </div>
@@ -223,4 +222,3 @@ export const PostActions = ({
     </>
   );
 };
-

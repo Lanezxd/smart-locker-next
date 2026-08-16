@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { motion } from "framer-motion";
 import { LockerCard } from "./LockerCard";
 import { Locker } from "@/types/locker";
@@ -19,7 +19,7 @@ export function LockerGrid({ lockers, onLockerClick }: LockerGridProps) {
         visible: {
           opacity: 1,
           transition: {
-            staggerChildren: 0.1,
+            staggerChildren: 0.06,
           },
         },
       }}

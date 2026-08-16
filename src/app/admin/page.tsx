@@ -127,35 +127,6 @@ const AdminDashboardPage = () => {
     setChatUsers(users);
   };
 
-  const handleUnlockLocker = async (transactionId: string) => {
-    setActionLoading(transactionId);
-    const adminName = profile?.full_name 
-      ? `${profile.full_name} (Admin Override)` 
-      : profile?.username 
-      ? `${profile.username} (Admin Override)` 
-      : 'Admin (Admin Override)';
-    const adminContact = profile?.phone || user?.email || 'Admin Support';
-
-    const { error } = await supabase
-      .from('locker_transactions')
-      .update({
-        status: 'collected',
-        collected_at: new Date().toISOString(),
-        collector_user_id: user?.id || null,
-        collector_name: adminName,
-        collector_contact: adminContact
-      })
-      .eq('id', transactionId);
-
-    if (error) { 
-      toast.error('ไม่สามารถปลดล็อกตู้ได้'); 
-    } else { 
-      toast.success('ปลดล็อกตู้สำเร็จ!'); 
-      fetchTransactions(); 
-    }
-    setActionLoading(null);
-  };
-
   const handleAdminDirectUnlock = async (transactionId: string, lockerId: number) => {
     setActionLoading(transactionId);
     try {
@@ -281,7 +252,7 @@ const AdminDashboardPage = () => {
   };
 
   if (authLoading || adminLoading) {
-    return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>;
+    return <div className="min-h-screen bg-zinc-50 flex items-center justify-center"><Loader2 className="w-8 h-8 text-amber-500 animate-spin" /></div>;
   }
   if (!user || !isAdmin) return null;
 
@@ -292,31 +263,33 @@ const AdminDashboardPage = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-xl border-b border-border">
+    <div className="min-h-screen bg-zinc-50 text-zinc-900">
+      <header className="sticky top-0 z-50 bg-white/85 backdrop-blur-2xl border-b border-zinc-200">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => router.push('/')} className="p-2 hover:bg-secondary rounded-full transition-colors">
-            <ChevronLeft className="w-5 h-5 text-foreground" />
+          <button onClick={() => router.push('/')} className="p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-700 cursor-pointer">
+            <ChevronLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-primary" />
-            <h1 className="text-lg font-bold text-foreground">Admin Dashboard</h1>
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-500 flex items-center justify-center text-zinc-900 shadow-md shadow-amber-500/20">
+              <Shield className="w-4 h-4 stroke-[2.2]" />
+            </div>
+            <h1 className="text-base sm:text-lg font-semibold text-zinc-800 tracking-tight">Admin Dashboard</h1>
           </div>
         </div>
       </header>
 
       <div className="max-w-4xl mx-auto px-4 pt-4">
-        <div className="flex gap-2 bg-secondary rounded-xl p-1">
+        <div className="flex gap-2 bg-zinc-100 border border-zinc-200 rounded-2xl p-1">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-lg transition-all ${activeTab === tab.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition-all cursor-pointer ${activeTab === tab.id ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 shadow-md shadow-amber-500/20' : 'text-zinc-600 hover:text-zinc-800'}`}
             >
               <tab.icon className="w-4 h-4" />
               <span className="hidden sm:inline">{tab.label}</span>
               {tab.count > 0 && (
-                <span className="w-5 h-5 text-xs rounded-full bg-destructive text-destructive-foreground flex items-center justify-center">{tab.count}</span>
+                <span className="w-5 h-5 text-[10px] rounded-full bg-rose-600 text-white font-semibold flex items-center justify-center">{tab.count}</span>
               )}
             </button>
           ))}
@@ -326,31 +299,31 @@ const AdminDashboardPage = () => {
       <div className="max-w-4xl mx-auto p-4">
         {activeTab === 'lockers' && (
           <div className="space-y-3">
-            <h2 className="text-lg font-bold text-foreground mb-4">ตู้ที่มีของอยู่ ({transactions.length})</h2>
+            <h2 className="text-base sm:text-lg font-semibold text-zinc-800 mb-4">ตู้ที่มีของอยู่ ({transactions.length})</h2>
             {transactions.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground"><Package className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>ไม่มีตู้ที่มีของอยู่</p></div>
+              <div className="text-center py-16 text-zinc-400 font-normal"><Package className="w-12 h-12 mx-auto mb-3 opacity-40" /><p>ไม่มีตู้ที่มีของอยู่</p></div>
             ) : (
               transactions.map(tx => (
-                <div key={tx.id} className="bg-card rounded-2xl border border-border p-4">
+                <div key={tx.id} className="backdrop-blur-xl bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="text-sm font-bold text-primary">ตู้ #{String(tx.locker_id).padStart(2, '0')}</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-warning/10 text-warning">มีของ</span>
+                        <span className="text-sm font-semibold text-amber-800">ตู้ #{String(tx.locker_id).padStart(2, '0')}</span>
+                        <span className="text-xs px-2.5 py-0.5 rounded-full border border-amber-300 bg-amber-50 text-amber-800 font-medium">มีของ</span>
                       </div>
-                      <p className="text-sm text-foreground font-medium">{tx.item_description}</p>
-                      <p className="text-xs text-muted-foreground mt-1">ผู้ฝาก: {tx.depositor_name}</p>
-                      <p className="text-xs text-muted-foreground">ฝากเมื่อ: {new Date(tx.deposited_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                      <p className="text-sm text-zinc-800 font-medium">{tx.item_description}</p>
+                      <p className="text-xs text-zinc-600 mt-1 font-normal">ผู้ฝาก: {tx.depositor_name}</p>
+                      <p className="text-xs text-zinc-400 font-normal">ฝากเมื่อ: {new Date(tx.deposited_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
                     </div>
-                    {tx.image_url && <img src={tx.image_url} alt="" className="w-16 h-16 rounded-lg object-cover ml-3" />}
+                    {tx.image_url && <img src={tx.image_url} alt="" className="w-16 h-16 rounded-xl object-cover ml-3 border border-zinc-200" />}
                   </div>
                   <button
                     onClick={() => handleAdminDirectUnlock(tx.id, tx.locker_id)}
                     disabled={actionLoading === tx.id}
-                    className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-success/10 text-success font-semibold hover:bg-success/20 transition-colors disabled:opacity-50"
+                    className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 font-semibold hover:shadow-lg hover:shadow-amber-500/20 transition-all disabled:opacity-40 text-xs sm:text-sm cursor-pointer active:scale-[0.98]"
                   >
-                    {actionLoading === tx.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
-                    ปลดล็อกตู้ทันที
+                    {actionLoading === tx.id ? <Loader2 className="w-4 h-4 animate-spin text-zinc-900" /> : <Unlock className="w-4 h-4 stroke-[2.2]" />}
+                    <span>Unlock Locker Immediately</span>
                   </button>
                 </div>
               ))
@@ -360,42 +333,45 @@ const AdminDashboardPage = () => {
 
         {activeTab === 'reports' && (
           <div className="space-y-3">
-            <h2 className="text-lg font-bold text-foreground mb-4">รายงานที่รอดำเนินการ ({reports.filter(r => r.status === 'pending').length})</h2>
+            <h2 className="text-base sm:text-lg font-semibold text-zinc-800 mb-4">รายงานที่รอดำเนินการ ({reports.filter(r => r.status === 'pending').length})</h2>
             {reports.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground"><Flag className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>ไม่มีรายงาน</p></div>
+              <div className="text-center py-16 text-zinc-400 font-normal"><Flag className="w-12 h-12 mx-auto mb-3 opacity-40" /><p>ไม่มีรายงาน</p></div>
             ) : (
               reports.map(report => (
-                <div key={report.id} className="bg-card rounded-2xl border border-border p-4">
+                <div key={report.id} className="backdrop-blur-xl bg-white rounded-3xl border border-zinc-200 p-5 shadow-sm">
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${report.status === 'pending' ? 'bg-warning/10 text-warning' : 'bg-muted text-muted-foreground'}`}>
+                      <span className={`text-xs px-2.5 py-0.5 rounded-full border font-medium ${report.status === 'pending' ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-zinc-200 bg-zinc-100 text-zinc-600'}`}>
                         {report.status === 'pending' ? 'รอดำเนินการ' : report.status === 'dismissed' ? 'ปิดแล้ว' : report.status}
                       </span>
-                      <p className="text-sm text-foreground font-medium mt-2">เหตุผล: {report.reason}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{new Date(report.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                      <p className="text-sm text-zinc-800 font-medium mt-2">เหตุผล: {report.reason}</p>
+                      <p className="text-xs text-zinc-400 mt-1 font-normal">{new Date(report.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
                     </div>
                   </div>
                   {report.post && (
-                    <div className="mb-3 p-3 bg-secondary/50 rounded-xl border border-border">
-                      <p className="text-xs font-semibold text-muted-foreground mb-1">เนื้อหาโพสต์:</p>
-                      <p className="text-sm text-foreground whitespace-pre-wrap line-clamp-4">{report.post.content}</p>
-                      {report.post.image_url && <img src={report.post.image_url} alt="" className="mt-2 w-full max-h-40 object-cover rounded-lg" />}
+                    <div className="mb-3 p-3.5 bg-zinc-50 rounded-2xl border border-zinc-200">
+                      <p className="text-xs font-medium text-zinc-600 mb-1">เนื้อหาโพสต์:</p>
+                      <p className="text-sm text-zinc-800 whitespace-pre-wrap line-clamp-4 leading-relaxed font-normal">{report.post.content}</p>
+                      {report.post.image_url && <img src={report.post.image_url} alt="" className="mt-2 w-full max-h-40 object-cover rounded-xl border border-zinc-200" />}
                     </div>
                   )}
                   {report.status === 'pending' && (
                     <div className="flex gap-2">
                       {report.post_id && (
-                        <button onClick={() => handleDeletePost(report.post_id!)} disabled={actionLoading === report.post_id} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors disabled:opacity-50">
-                          {actionLoading === report.post_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}ลบโพสต์
+                        <button onClick={() => handleDeletePost(report.post_id!)} disabled={actionLoading === report.post_id} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-rose-50 text-rose-700 text-xs font-medium border border-rose-200 hover:bg-rose-100 transition-colors disabled:opacity-50 cursor-pointer">
+                          {actionLoading === report.post_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                          <span>Delete Post</span>
                         </button>
                       )}
                       {report.reported_user_id && (
-                        <button onClick={() => handleDeleteUser(report.reported_user_id!)} disabled={actionLoading === report.reported_user_id} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-destructive/10 text-destructive text-sm font-semibold hover:bg-destructive/20 transition-colors disabled:opacity-50">
-                          {actionLoading === report.reported_user_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}ลบผู้ใช้
+                        <button onClick={() => handleDeleteUser(report.reported_user_id!)} disabled={actionLoading === report.reported_user_id} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-rose-50 text-rose-700 text-xs font-medium border border-rose-200 hover:bg-rose-100 transition-colors disabled:opacity-50 cursor-pointer">
+                          {actionLoading === report.reported_user_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                          <span>Delete User</span>
                         </button>
                       )}
-                      <button onClick={() => handleDismissReport(report.id)} disabled={actionLoading === report.id} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-muted text-muted-foreground text-sm font-semibold hover:bg-muted/80 transition-colors disabled:opacity-50">
-                        {actionLoading === report.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}ปิดรายงาน
+                      <button onClick={() => handleDismissReport(report.id)} disabled={actionLoading === report.id} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-zinc-100 text-zinc-700 text-xs font-medium hover:bg-zinc-200 transition-colors disabled:opacity-50 cursor-pointer border border-zinc-200">
+                        {actionLoading === report.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                        <span>Dismiss</span>
                       </button>
                     </div>
                   )}
@@ -409,38 +385,38 @@ const AdminDashboardPage = () => {
           <div className="flex flex-col" style={{ height: 'calc(100vh - 200px)' }}>
             {!selectedChatUser ? (
               <div className="space-y-2">
-                <h2 className="text-lg font-bold text-foreground mb-4">ข้อความจากผู้ใช้</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-zinc-800 mb-4">ข้อความจากผู้ใช้</h2>
                 {chatUsers.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground"><MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" /><p>ไม่มีข้อความ</p></div>
+                  <div className="text-center py-16 text-zinc-400 font-normal"><MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-40" /><p>ไม่มีข้อความ</p></div>
                 ) : (
                   chatUsers.map(cu => (
-                    <button key={cu.user_id} onClick={() => selectChatUser(cu.user_id)} className="w-full flex items-center gap-3 p-4 bg-card rounded-2xl border border-border hover:border-primary/30 transition-colors text-left">
-                      <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
-                        {cu.avatar_url ? <img src={cu.avatar_url} alt="" className="w-full h-full object-cover" /> : <span className="text-sm font-bold text-primary">{(cu.full_name || cu.username || '?').charAt(0)}</span>}
+                    <button key={cu.user_id} onClick={() => selectChatUser(cu.user_id)} className="w-full flex items-center gap-3.5 p-4 backdrop-blur-xl bg-white rounded-2xl border border-zinc-200 hover:border-amber-300 transition-colors text-left cursor-pointer shadow-sm">
+                      <div className="w-10 h-10 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center overflow-hidden shrink-0">
+                        {cu.avatar_url ? <img src={cu.avatar_url} alt="" className="w-full h-full object-cover" /> : <span className="text-sm font-semibold text-amber-700">{(cu.username || cu.full_name || '?').charAt(0)}</span>}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-foreground text-sm truncate">{cu.full_name || cu.username || 'ผู้ใช้'}</p>
-                        <p className="text-xs text-muted-foreground truncate">{cu.last_message}</p>
+                        <p className="font-semibold text-zinc-800 text-sm truncate">{cu.username || cu.full_name || 'ผู้ใช้'}</p>
+                        <p className="text-xs text-zinc-500 truncate mt-0.5 font-normal">{cu.last_message}</p>
                       </div>
-                      {(cu.unread_count || 0) > 0 && <span className="w-5 h-5 text-xs rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shrink-0">{cu.unread_count}</span>}
+                      {(cu.unread_count || 0) > 0 && <span className="w-5 h-5 text-[10px] rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 font-semibold flex items-center justify-center shrink-0 shadow-sm">{cu.unread_count}</span>}
                     </button>
                   ))
                 )}
               </div>
             ) : (
-              <div className="flex flex-col h-full">
-                <div className="flex items-center gap-3 pb-3 border-b border-border mb-3">
-                  <button onClick={() => setSelectedChatUser(null)} className="p-1.5 hover:bg-secondary rounded-full">
+              <div className="flex flex-col h-full backdrop-blur-2xl bg-white rounded-3xl border border-zinc-200 p-4 shadow-sm">
+                <div className="flex items-center gap-3 pb-3 border-b border-zinc-100 mb-3">
+                  <button onClick={() => setSelectedChatUser(null)} className="p-1.5 hover:bg-zinc-100 rounded-full cursor-pointer text-zinc-700">
                     <ChevronLeft className="w-5 h-5" />
                   </button>
-                  <p className="font-semibold text-foreground">{chatUsers.find(u => u.user_id === selectedChatUser)?.full_name || 'ผู้ใช้'}</p>
+                  <p className="font-semibold text-sm text-zinc-800">{chatUsers.find(u => u.user_id === selectedChatUser)?.username || chatUsers.find(u => u.user_id === selectedChatUser)?.full_name || 'ผู้ใช้'}</p>
                 </div>
-                <div className="flex-1 overflow-y-auto space-y-2 pb-3">
+                <div className="flex-1 overflow-y-auto space-y-2.5 pb-3">
                   {chatMessages.map(msg => (
                     <div key={msg.id} className={`flex ${msg.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm ${msg.sender_type === 'admin' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-foreground'}`}>
+                      <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs sm:text-sm leading-relaxed shadow-sm ${msg.sender_type === 'admin' ? 'bg-amber-100/90 border border-amber-200 text-zinc-900 font-medium rounded-tr-sm' : 'bg-zinc-100 border border-zinc-200 text-zinc-800 font-normal rounded-tl-sm'}`}>
                         {msg.content}
-                        <p className={`text-[10px] mt-1 ${msg.sender_type === 'admin' ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
+                        <p className={`text-[10px] mt-1 font-normal ${msg.sender_type === 'admin' ? 'text-amber-800/70' : 'text-zinc-400'}`}>
                           {new Date(msg.created_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
                         </p>
                       </div>
@@ -448,10 +424,10 @@ const AdminDashboardPage = () => {
                   ))}
                   <div ref={chatEndRef} />
                 </div>
-                <form onSubmit={sendAdminMessage} className="flex gap-2 pt-3 border-t border-border">
-                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="พิมพ์ข้อความ..." className="flex-1 px-4 py-2.5 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-sm" />
-                  <button type="submit" disabled={!newMessage.trim()} className="p-2.5 gradient-primary rounded-xl text-primary-foreground disabled:opacity-50">
-                    <Send className="w-5 h-5" />
+                <form onSubmit={sendAdminMessage} className="flex gap-2 pt-3 border-t border-zinc-100">
+                  <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="พิมพ์ข้อความตอบกลับ..." className="flex-1 px-4 py-2.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-xs sm:text-sm shadow-sm transition-all" />
+                  <button type="submit" disabled={!newMessage.trim()} className="px-4 py-2.5 bg-gradient-to-r from-amber-400 to-yellow-500 rounded-xl text-zinc-900 font-semibold disabled:opacity-40 transition-all cursor-pointer shadow-md shadow-amber-500/20">
+                    <Send className="w-4 h-4 stroke-[2.2]" />
                   </button>
                 </form>
               </div>

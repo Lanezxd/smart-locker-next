@@ -40,12 +40,17 @@ export function MqttSupabaseListener() {
       mqttClientRef.current = client;
 
       client.on('connect', () => {
+        if (!isSubscribed || !client || !client.connected) return;
         console.log('[MQTT-Supabase Sync] Successfully connected to HiveMQ Cloud broker');
         
         // Topic pattern: lostreturn/locker/+/status
         const topicPattern = 'lostreturn/locker/+/status';
         client.subscribe(topicPattern, { qos: 1 }, (err) => {
           if (err) {
+            const errMsg = (err.message || String(err)).toLowerCase();
+            if (!isSubscribed || !client || !client.connected || errMsg.includes('closed') || errMsg.includes('closing')) {
+              return;
+            }
             console.error('[MQTT-Supabase Sync] Failed to subscribe to topic pattern:', topicPattern, err);
           } else {
             console.log('[MQTT-Supabase Sync] Subscribed to topic pattern:', topicPattern);
@@ -126,7 +131,10 @@ export function MqttSupabaseListener() {
         }
       });
 
-      client.on('error', (err) => {
+      client.on('error', (err: any) => {
+        if (!isSubscribed) return;
+        const errMsg = (err?.message || String(err)).toLowerCase();
+        if (errMsg.includes('closed') || errMsg.includes('closing')) return;
         console.error('[MQTT-Supabase Sync] Connection error:', err);
       });
 

@@ -31,8 +31,10 @@ export const usePosts = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchPosts = useCallback(async () => {
-    setLoading(true);
+  const fetchPosts = useCallback(async (isSilent = false) => {
+    if (!isSilent) {
+      setLoading(prev => posts.length === 0 ? true : prev);
+    }
     setError(null);
     const { data: postsData, error: postsError } = await supabase
       .from('posts')
@@ -56,7 +58,7 @@ export const usePosts = () => {
       setPosts((postsData || []) as Post[]);
     }
     setLoading(false);
-  }, []);
+  }, [posts.length]);
 
   useEffect(() => { fetchPosts(); }, [fetchPosts]);
 

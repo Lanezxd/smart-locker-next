@@ -69,14 +69,19 @@ export const useAuth = () => {
     setProfile(data ?? null);
   };
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = async (
+    email: string, 
+    password: string, 
+    metadata?: { full_name?: string; phone?: string; user_type?: string; [key: string]: unknown }
+  ) => {
     const redirectUrl = `${window.location.origin}/`;
     
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: redirectUrl
+        emailRedirectTo: redirectUrl,
+        data: metadata,
       }
     });
 
@@ -177,6 +182,15 @@ export const useAuth = () => {
     return { data, error: null };
   };
 
+  const resetPasswordForEmail = async (email: string) => {
+    const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo
+    });
+
+    return { data, error };
+  };
+
   return {
     user,
     session,
@@ -187,8 +201,9 @@ export const useAuth = () => {
     signOut,
     verifyOtp,
     resendOtp,
+    resetPasswordForEmail,
     updateProfile,
-    refreshProfile: () => user && fetchProfile(user.id)
+    refreshProfile: () => { if (user) return fetchProfile(user.id); }
   };
 };
 

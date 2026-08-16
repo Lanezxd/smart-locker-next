@@ -1,37 +1,37 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
-
-import { cn } from "@/lib/utils"
+import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold tracking-wide transition-all backdrop-blur-md focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+          "border-amber-300/80 bg-amber-50 text-amber-800 shadow-sm",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "border-zinc-200 bg-zinc-100 text-zinc-800",
         destructive:
-          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
+          "border-rose-200 bg-rose-50 text-rose-700 shadow-sm",
+        outline:
+          "border-zinc-300 text-zinc-800 bg-white",
         success:
-          "border-transparent bg-success text-success-foreground",
+          "border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm",
         warning:
-          "border-transparent bg-warning text-warning-foreground",
+          "border-amber-300 bg-amber-50 text-amber-800 shadow-sm",
         empty:
-          "border-primary/30 bg-primary/10 text-primary",
+          "border-emerald-300/80 bg-emerald-50 text-emerald-700 shadow-[0_2px_8px_rgba(16,185,129,0.12)]",
         occupied:
-          "border-warning/30 bg-warning/10 text-warning",
+          "border-amber-300/80 bg-amber-50 text-amber-800 shadow-[0_2px_8px_rgba(245,158,11,0.15)]",
         locked:
-          "border-destructive/30 bg-destructive/10 text-destructive",
+          "border-rose-200 bg-rose-50 text-rose-700 shadow-[0_2px_8px_rgba(244,63,94,0.12)]",
       },
     },
     defaultVariants: {
       variant: "default",
     },
   }
-)
+);
 
 export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
@@ -40,7 +40,7 @@ export interface BadgeProps
 function Badge({ className, variant, ...props }: BadgeProps) {
   return (
     <div className={cn(badgeVariants({ variant }), className)} {...props} />
-  )
+  );
 }
 
-export { Badge, badgeVariants }
+export { Badge, badgeVariants };

@@ -360,6 +360,7 @@ export type Database = {
           created_at: string
           full_name: string | null
           id: string
+          last_seen_at: string | null
           national_id: string | null
           phone: string | null
           student_id: string | null
@@ -373,6 +374,7 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id?: string
+          last_seen_at?: string | null
           national_id?: string | null
           phone?: string | null
           student_id?: string | null
@@ -386,6 +388,7 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id?: string
+          last_seen_at?: string | null
           national_id?: string | null
           phone?: string | null
           student_id?: string | null

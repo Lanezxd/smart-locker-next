@@ -1,14 +1,12 @@
-﻿'use client';
+'use client';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { FeedPost, FeedPostData } from './FeedPost';
-import { SearchBar } from './SearchBar';
 import { LockerSearchResults } from './LockerSearchResults';
 import { Loader2, PenSquare } from 'lucide-react';
 import { usePosts, Post } from '@/hooks/usePosts';
 import { CreatePostModal } from './CreatePostModal';
 import { supabase } from '@/integrations/supabase/client';
 import { useLockerTransactions } from '@/hooks/useLockerTransactions';
-
 
 interface BlockedUser {
   blocked_user_id: string;
@@ -32,7 +30,7 @@ const convertToFeedPost = (post: Post): FeedPostData => {
     type: typeMap[post.post_type] || 'lost_item',
     user: {
       id: post.user_id,
-      name: post.profiles?.full_name || post.profiles?.username || 'ผู้ใช้',
+      name: post.profiles?.username || post.profiles?.full_name || 'ผู้ใช้',
       avatar: post.profiles?.avatar_url || null,
       isSystem: post.post_type === 'locker'
     },
@@ -57,7 +55,7 @@ interface SocialFeedProps {
   onSearchChange?: (value: string) => void;
 }
 
-export const SocialFeed = ({ onPostClick, isLoggedIn, isAdmin, userName, currentUserId, onLoginRequired, onLockerClick, searchQuery: externalSearchQuery, onSearchChange }: SocialFeedProps) => {
+export const SocialFeed = ({ isLoggedIn, isAdmin, userName, currentUserId, onLoginRequired, onLockerClick, searchQuery: externalSearchQuery, onSearchChange }: SocialFeedProps) => {
   const [internalSearchQuery, setInternalSearchQuery] = useState('');
   const searchQuery = externalSearchQuery ?? internalSearchQuery;
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -110,7 +108,7 @@ export const SocialFeed = ({ onPostClick, isLoggedIn, isAdmin, userName, current
           table: 'posts'
         },
         () => {
-          fetchPosts();
+          fetchPosts(true);
         }
       )
       .subscribe();
@@ -181,7 +179,7 @@ export const SocialFeed = ({ onPostClick, isLoggedIn, isAdmin, userName, current
   };
 
   return (
-    <div className="min-h-screen bg-background pb-20">
+    <div className="min-h-screen bg-zinc-50 pb-20">
       {/* Locker Search Results - Show when searching */}
       {onLockerClick && (
         <LockerSearchResults
@@ -193,14 +191,14 @@ export const SocialFeed = ({ onPostClick, isLoggedIn, isAdmin, userName, current
       )}
 
       {/* Feed */}
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-zinc-200/80">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
           </div>
         ) : filteredPosts.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">ไม่พบโพสต์ที่ตรงกับการค้นหา</p>
+          <div className="text-center py-16">
+            <p className="text-zinc-500 text-xs sm:text-sm font-normal">ไม่มีโพสต์ที่ตรงกับการค้นหา</p>
           </div>
         ) : (
           filteredPosts.map(post => (
@@ -223,10 +221,10 @@ export const SocialFeed = ({ onPostClick, isLoggedIn, isAdmin, userName, current
       {/* Floating Create Post Button */}
       <button
         onClick={handleCreatePostClick}
-        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 gradient-primary rounded-full shadow-xl shadow-primary/30 flex items-center justify-center hover:shadow-2xl hover:shadow-primary/40 hover:scale-110 transition-all z-40"
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-12 h-12 sm:w-14 sm:h-14 bg-white hover:bg-zinc-50 border border-zinc-300 hover:border-zinc-900 focus:border-zinc-900 active:border-zinc-900 text-zinc-800 rounded-2xl shadow-md flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-40 cursor-pointer outline-none"
         aria-label="สร้างโพสต์ใหม่"
       >
-        <PenSquare className="w-5 h-5 sm:w-6 sm:h-6 text-primary-foreground" />
+        <PenSquare className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.2] text-zinc-800" />
       </button>
 
       {/* Create Post Modal */}
@@ -239,4 +237,3 @@ export const SocialFeed = ({ onPostClick, isLoggedIn, isAdmin, userName, current
     </div>
   );
 };
-

@@ -1,6 +1,6 @@
-﻿'use client';
+'use client';
 import React, { useState, useRef } from 'react';
-import { X, Save, Loader2, AlertCircle, Package, ImagePlus, Trash2 } from 'lucide-react';
+import { X, ImagePlus, Loader2, AlertCircle, Package, Trash2, Save } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -9,7 +9,7 @@ interface EditPostModalProps {
   onClose: () => void;
   post: {
     id: string;
-    post_type: string;
+    post_type: 'lost' | 'found' | 'locker';
     title: string;
     content: string;
     image_url: string | null;
@@ -17,13 +17,19 @@ interface EditPostModalProps {
   onUpdate: () => void;
 }
 
-export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModalProps) => {
-  const [postType, setPostType] = useState<'lost' | 'found'>(post.post_type as 'lost' | 'found');
-  const [title, setTitle] = useState(post.title);
+export const EditPostModal = ({ 
+  isOpen, 
+  onClose, 
+  post, 
+  onUpdate 
+}: EditPostModalProps) => {
+  const [postType, setPostType] = useState<'lost' | 'found'>(
+    post.post_type === 'found' ? 'found' : 'lost'
+  );
   const [content, setContent] = useState(post.content);
   const [imageUrl, setImageUrl] = useState<string | null>(post.image_url);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -32,49 +38,38 @@ export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModal
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
     if (!file.type.startsWith('image/')) {
       toast.error('กรุณาเลือกไฟล์รูปภาพ');
       return;
     }
 
-    // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      toast.error('ไฟล์ใหญ่เกินไป (สูงสุด 5MB)');
+      toast.error('ขนาดรูปภาพต้องไม่เกิน 5MB');
       return;
     }
 
     setUploading(true);
-
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        toast.error('กรุณาเข้าสู่ระบบ');
-        return;
-      }
-
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+      const ext = file.name.split('.').pop();
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${ext}`;
+      const filePath = `post-images/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('post-images')
-        .upload(fileName, file);
+        .upload(filePath, file);
 
       if (uploadError) {
-        console.error('Upload error:', uploadError);
-        toast.error('ไม่สามารถอัปโหลดรูปภาพได้');
+        toast.error('อัปโหลดรูปภาพไม่สำเร็จ');
         return;
       }
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: publicUrlData } = supabase.storage
         .from('post-images')
-        .getPublicUrl(fileName);
+        .getPublicUrl(filePath);
 
-      setImageUrl(publicUrl);
-      toast.success('อัปโหลดรูปภาพสำเร็จ');
-    } catch (err) {
-      console.error('Upload error:', err);
-      toast.error('เกิดข้อผิดพลาดในการอัปโหลด');
+      setImageUrl(publicUrlData.publicUrl);
+    } catch {
+      toast.error('เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ');
     } finally {
       setUploading(false);
     }
@@ -82,64 +77,70 @@ export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModal
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!content.trim()) return;
-    
-    setIsSubmitting(true);
-
-    const { error } = await supabase
-      .from('posts')
-      .update({
-        post_type: postType,
-        title: content.trim().substring(0, 50),
-        content: content.trim(),
-        image_url: imageUrl
-      })
-      .eq('id', post.id);
-
-    if (error) {
-      toast.error('ไม่สามารถอัปเดตโพสต์ได้');
-    } else {
-      toast.success('อัปเดตโพสต์สำเร็จ');
-      onUpdate();
-      onClose();
+    if (!content.trim()) {
+      toast.error('กรุณาระบุรายละเอียด');
+      return;
     }
 
-    setIsSubmitting(false);
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({
+          title: content.slice(0, 50),
+          content: content,
+          post_type: postType,
+          image_url: imageUrl,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', post.id);
+
+      if (error) {
+        toast.error('แก้ไขโพสต์ไม่สำเร็จ');
+      } else {
+        toast.success('แก้ไขโพสต์สำเร็จ!');
+        onUpdate();
+        onClose();
+      }
+    } catch {
+      toast.error('เกิดข้อผิดพลาดในการแก้ไขโพสต์');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
         onClick={onClose}
       />
       
       {/* Modal */}
-      <div className="relative z-10 w-full sm:max-w-lg bg-card rounded-t-3xl sm:rounded-3xl max-h-[90vh] overflow-hidden animate-slide-up">
+      <div className="relative z-10 w-full sm:max-w-lg backdrop-blur-2xl bg-white/95 border border-zinc-200 rounded-t-3xl sm:rounded-3xl max-h-[88vh] overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.1)] animate-slide-up">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <h2 className="text-lg font-bold text-foreground">แก้ไขโพสต์</h2>
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-100">
+          <h2 className="text-base sm:text-lg font-semibold text-zinc-800">แก้ไขโพสต์</h2>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-secondary rounded-full transition-colors"
+            className="p-1.5 sm:p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-500 hover:text-zinc-800 cursor-pointer"
           >
-            <X className="w-5 h-5 text-muted-foreground" />
+            <X className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <form onSubmit={handleSubmit} className="p-4 space-y-4 overflow-y-auto max-h-[calc(90vh-140px)]">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-4 overflow-y-auto max-h-[calc(88vh-140px)]">
           {/* Post Type Toggle */}
-          <div className="flex gap-2 p-1 bg-secondary rounded-xl">
+          <div className="flex gap-2 p-1 bg-zinc-100 border border-zinc-200 rounded-2xl">
             <button
               type="button"
               onClick={() => setPostType('lost')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              className={`flex-1 flex items-center justify-center gap-1.5 sm:gap-2 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
                 postType === 'lost' 
-                  ? 'bg-destructive/10 text-destructive' 
-                  : 'text-muted-foreground hover:text-foreground'
+                  ? 'border border-rose-300 bg-rose-50 text-rose-700 shadow-sm' 
+                  : 'text-zinc-600 hover:text-zinc-800'
               }`}
             >
               <AlertCircle className="w-4 h-4" />
@@ -148,10 +149,10 @@ export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModal
             <button
               type="button"
               onClick={() => setPostType('found')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              className={`flex-1 flex items-center justify-center gap-1.5 sm:gap-2 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
                 postType === 'found' 
-                  ? 'bg-success/10 text-success' 
-                  : 'text-muted-foreground hover:text-foreground'
+                  ? 'border border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm' 
+                  : 'text-zinc-600 hover:text-zinc-800'
               }`}
             >
               <Package className="w-4 h-4" />
@@ -160,34 +161,34 @@ export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModal
           </div>
 
           {/* Content */}
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">
-              รายละเอียด <span className="text-destructive">*</span>
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-zinc-700">
+              รายละเอียด <span className="text-rose-500">*</span>
             </label>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
               rows={4}
-              className="w-full px-4 py-3 rounded-xl border border-border bg-card focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all resize-none"
+              className="w-full px-4 py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 text-xs sm:text-sm focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 transition-all resize-none shadow-sm"
               required
             />
           </div>
 
           {/* Image Upload */}
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-zinc-700">
               รูปภาพ
             </label>
             
             {imageUrl ? (
-              <div className="relative rounded-xl overflow-hidden border border-border">
-                <img src={imageUrl} alt="Preview" className="w-full h-48 object-cover" />
+              <div className="relative rounded-2xl overflow-hidden border border-zinc-200 bg-zinc-900/[0.03] shadow-sm flex items-center justify-center">
+                <img src={imageUrl} alt="Preview" className="w-full max-h-72 sm:max-h-80 object-contain rounded-2xl" />
                 <button
                   type="button"
                   onClick={() => setImageUrl(null)}
-                  className="absolute top-2 right-2 p-2 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-colors"
+                  className="absolute top-2 right-2 p-1.5 bg-rose-500 text-white rounded-full hover:bg-rose-600 transition-colors shadow-lg cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
             ) : (
@@ -195,14 +196,14 @@ export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModal
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="w-full py-8 border-2 border-dashed border-border rounded-xl hover:border-primary/50 hover:bg-primary/5 transition-all flex flex-col items-center gap-2 text-muted-foreground"
+                className="w-full py-6 border-2 border-dashed border-zinc-300 rounded-2xl hover:border-zinc-900 bg-zinc-50 transition-all flex flex-col items-center gap-2 text-zinc-500 hover:text-zinc-900 cursor-pointer font-normal group"
               >
                 {uploading ? (
-                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  <Loader2 className="w-6 h-6 animate-spin text-zinc-800" />
                 ) : (
-                  <ImagePlus className="w-8 h-8" />
+                  <ImagePlus className="w-6 h-6 text-zinc-500 group-hover:text-zinc-900 transition-colors" />
                 )}
-                <span className="text-sm">{uploading ? 'กำลังอัปโหลด...' : 'คลิกเพื่อเลือกรูปภาพ'}</span>
+                <span className="text-xs font-medium">{uploading ? 'กำลังอัปโหลด...' : 'คลิกเพื่อเลือกรูปภาพ'}</span>
               </button>
             )}
             
@@ -217,22 +218,22 @@ export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModal
         </form>
 
         {/* Footer */}
-        <div className="p-4 border-t border-border">
+        <div className="p-4 sm:p-5 border-t border-zinc-100">
           <button
             type="submit"
             onClick={handleSubmit}
             disabled={!content.trim() || isSubmitting}
-            className="w-full gradient-primary text-primary-foreground font-bold py-3 rounded-xl shadow-lg shadow-primary/30 disabled:opacity-50 disabled:shadow-none transition-all flex items-center justify-center gap-2"
+            className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 font-semibold py-3.5 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 disabled:opacity-40 transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer active:scale-[0.98]"
           >
             {isSubmitting ? (
               <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                กำลังบันทึก...
+                <Loader2 className="w-4 h-4 animate-spin text-zinc-900" />
+                <span>กำลังบันทึก...</span>
               </>
             ) : (
               <>
-                <Save className="w-5 h-5" />
-                บันทึกการแก้ไข
+                <Save className="w-4 h-4 stroke-[2.2]" />
+                <span>Save Changes</span>
               </>
             )}
           </button>
@@ -241,4 +242,3 @@ export const EditPostModal = ({ isOpen, onClose, post, onUpdate }: EditPostModal
     </div>
   );
 };
-

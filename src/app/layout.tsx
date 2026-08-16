@@ -1,9 +1,17 @@
 import type { Metadata } from "next";
+import { Playfair_Display } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-serif",
+  display: "swap",
+  weight: ["500", "600", "700", "800"],
+});
+
 export const metadata: Metadata = {
-  title: "SmartLocker — LostReturn",
+  title: "LOSTRETURN — Smart Locker System",
   description: "ระบบตู้รับฝาก-คืนทรัพย์สินสูญหายอัตโนมัติ ปลอดภัยด้วย IoT และ OTP",
 };
 
@@ -13,8 +21,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="th" suppressHydrationWarning data-scroll-behavior="smooth">
-      <body className="min-h-screen flex flex-col antialiased max-w-full overflow-x-hidden">
+    <html lang="th" className={playfair.variable} suppressHydrationWarning data-scroll-behavior="smooth">
+      <body className="min-h-screen flex flex-col antialiased max-w-full overflow-x-hidden font-sans">
         <Providers>
           <main className="flex-1">
             {children}

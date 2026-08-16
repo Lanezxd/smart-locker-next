@@ -1,12 +1,11 @@
 'use client';
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, KeyRound, CheckCircle, AlertCircle, ShieldQuestion, MessageSquare, Loader2, Send } from "lucide-react";
+import { X, KeyRound, CheckCircle, AlertCircle, ShieldQuestion, MessageSquare, Loader2, Send, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Locker, ChatMessage, VerificationResult } from "@/types/locker";
 import { generateOTP } from "@/lib/locker-data";
@@ -39,6 +38,7 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
   const [newMessage, setNewMessage] = useState('');
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [attempts, setAttempts] = useState(0);
+  const [copied, setCopied] = useState(false);
   const { markAsCollected } = useLockerTransactions();
 
   // Timer useEffect for Collect OTP timeout
@@ -151,7 +151,6 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
       }
 
       const data = await response.json();
-      console.log('Verification result:', data);
       setVerificationResult(data);
 
       if (data.isMatch) {
@@ -222,7 +221,7 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
       try {
         if (transactionId) {
           const collectorUserId = user?.id || null;
-          const collectorName = profile?.full_name || profile?.username || (user?.email ? user.email.split('@')[0] : null);
+          const collectorName = profile?.username || profile?.full_name || (user?.email ? user.email.split('@')[0] : null);
           const collectorContact = profile?.phone || user?.email || null;
 
           // 1. Update Supabase with matched OTP, timestamp, status, collected_at, and collector identity
@@ -302,7 +301,7 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     setChatMessages(prev => [...prev, message]);
     setNewMessage('');
 
-    // Simulate depositor response (in real app this would be real-time)
+    // Simulate depositor response
     setTimeout(() => {
       const response: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -322,6 +321,14 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     setOtpGeneratedAt(new Date());
     setStep('otp');
     toast.success('ผู้ฝากอนุมัติแล้ว! กรุณากรอก OTP');
+  };
+
+  const handleCopyOtp = () => {
+    if (!generatedOTP) return;
+    navigator.clipboard.writeText(generatedOTP);
+    setCopied(true);
+    toast.success('คัดลอกรหัส OTP แล้ว!');
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleConfirm = async () => {
@@ -356,58 +363,62 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
           onClick={handleClose}
         >
           <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0, y: 15 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: 15 }}
+            transition={{ duration: 0.25 }}
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-md max-h-[90vh] overflow-y-auto"
           >
-            <Card variant="elevated" className="overflow-hidden">
-              <CardHeader className="flex flex-row items-center justify-between border-b border-border pb-3 sm:pb-4 px-3 sm:px-6">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <div className={`p-1.5 sm:p-2 rounded-lg ${step === 'chat' ? 'bg-accent/10' : 'bg-warning/10'}`}>
+            <Card variant="elevated" className="overflow-hidden backdrop-blur-2xl bg-white/95 border-zinc-200 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.1)]">
+              <CardHeader className="flex flex-row items-center justify-between border-b border-zinc-100 pb-4 px-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 shadow-sm">
                     {step === 'security' || step === 'verifying' ? (
-                      <ShieldQuestion className="w-4 h-4 sm:w-5 sm:h-5 text-warning" />
+                      <ShieldQuestion className="w-5 h-5" />
                     ) : step === 'chat' ? (
-                      <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-accent" />
+                      <MessageSquare className="w-5 h-5 text-amber-600" />
                     ) : (
-                      <KeyRound className="w-4 h-4 sm:w-5 sm:h-5 text-warning" />
+                      <KeyRound className="w-5 h-5" />
                     )}
                   </div>
-                  <CardTitle className="text-base sm:text-lg">
-                    {step === 'security' || step === 'verifying' ? 'ยืนยันความเป็นเจ้าของ' : 
-                     step === 'chat' ? 'ติดต่อผู้ฝาก' :
-                     step === 'otp' ? 'กรอก OTP' : 'สำเร็จ'} - ช่อง {locker.id}
-                  </CardTitle>
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-zinc-800">
+                      {step === 'security' || step === 'verifying' ? 'ยืนยันความเป็นเจ้าของ' : 
+                       step === 'chat' ? 'ติดต่อผู้ฝาก' :
+                       step === 'otp' ? 'กรอก OTP' : 'สำเร็จ'} — ช่อง {String(locker.id).padStart(2, '0')}
+                    </CardTitle>
+                    <p className="text-xs text-zinc-500 font-normal">Smart Locker Claim</p>
+                  </div>
                 </div>
-                <Button variant="ghost" size="icon" onClick={handleClose} className="h-8 w-8 sm:h-9 sm:w-9">
+                <Button variant="ghost" size="icon" onClick={handleClose} className="h-8 w-8 text-zinc-500 hover:text-zinc-800 rounded-full">
                   <X className="w-4 h-4" />
                 </Button>
               </CardHeader>
               
-              <CardContent className="pt-4 sm:pt-6 px-3 sm:px-6">
+              <CardContent className="pt-5 px-6">
                 {/* Security Question Step */}
                 {step === 'security' && (
-                  <form onSubmit={handleSecuritySubmit} className="space-y-6">
-                    <div className="text-center mb-4">
-                      <p className="text-muted-foreground">
-                        สิ่งของในช่อง: <span className="font-medium text-foreground">{locker.itemDescription}</span>
+                  <form onSubmit={handleSecuritySubmit} className="space-y-5">
+                    <div className="text-center p-3 rounded-2xl bg-zinc-50 border border-zinc-200">
+                      <p className="text-xs text-zinc-600 font-normal">
+                        สิ่งของในช่อง: <span className="font-medium text-zinc-800">{locker.itemDescription || 'ทรัพย์สิน'}</span>
                       </p>
                     </div>
 
                     {locker.securityQuestion ? (
                       <>
-                        <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
-                          <p className="text-sm font-medium text-foreground mb-1">คำถามยืนยัน:</p>
-                          <p className="text-foreground">{locker.securityQuestion.question}</p>
+                        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200">
+                          <p className="text-xs font-semibold text-amber-800 mb-1">คำถามยืนยัน:</p>
+                          <p className="text-sm font-medium text-zinc-800">{locker.securityQuestion.question}</p>
                         </div>
 
-                        <div className="space-y-2">
-                          <Label htmlFor="answer">คำตอบของคุณ</Label>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="answer" className="text-xs font-medium text-zinc-700">คำตอบของคุณ</Label>
                           <Input
                             id="answer"
                             placeholder="พิมพ์คำตอบ..."
@@ -416,28 +427,29 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
                               setUserAnswer(e.target.value);
                               setError('');
                             }}
+                            autoFocus
                           />
                           {error && (
-                            <div className="flex items-center gap-2 text-destructive text-sm">
-                              <AlertCircle className="w-4 h-4" />
-                              {error}
+                            <div className="flex items-center gap-1.5 text-rose-600 text-xs mt-1">
+                              <AlertCircle className="w-3.5 h-3.5" />
+                              <span>{error}</span>
                             </div>
                           )}
                         </div>
 
-                        <p className="text-xs text-muted-foreground text-center">
+                        <p className="text-xs text-zinc-500 text-center font-normal">
                           โอกาสตอบคำถาม: {MAX_ATTEMPTS - attempts}/{MAX_ATTEMPTS} ครั้ง
                         </p>
 
-                        <Button type="submit" className="w-full" size="lg" disabled={attempts >= MAX_ATTEMPTS}>
-                          ตรวจสอบคำตอบ
+                        <Button type="submit" className="w-full h-12 font-semibold shadow-lg shadow-amber-500/20 text-sm" disabled={attempts >= MAX_ATTEMPTS}>
+                          ยืนยันคำตอบ
                         </Button>
                       </>
                     ) : (
-                      <div className="text-center py-4">
-                        <p className="text-muted-foreground">ไม่มีคำถามลับสำหรับช่องนี้</p>
-                        <Button onClick={() => setStep('otp')} className="mt-4">
-                          กรอก OTP โดยตรง
+                      <div className="text-center py-4 space-y-3">
+                        <p className="text-sm text-zinc-500 font-normal">ไม่มีคำถามลับสำหรับช่องนี้</p>
+                        <Button onClick={() => setStep('otp')} className="w-full h-12 font-semibold">
+                          Enter OTP Directly
                         </Button>
                       </div>
                     )}
@@ -447,49 +459,58 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
                 {/* Verifying Step */}
                 {step === 'verifying' && (
                   <div className="text-center py-8 space-y-4">
-                    <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto" />
-                    <p className="text-muted-foreground">กำลังตรวจสอบคำตอบด้วย AI...</p>
+                    <Loader2 className="w-12 h-12 text-amber-500 animate-spin mx-auto" />
+                    <p className="text-sm text-zinc-600 font-medium">กำลังตรวจสอบคำตอบด้วย AI...</p>
                   </div>
                 )}
 
                 {/* OTP Step */}
                 {step === 'otp' && (
-                  <form onSubmit={handleOTPVerify} className="space-y-6">
-                    <div className="text-center mb-4">
-                      <div className="p-4 rounded-2xl bg-success/10 inline-block mb-4">
-                        <CheckCircle className="w-8 h-8 text-success" />
+                  <form onSubmit={handleOTPVerify} className="space-y-5">
+                    <div className="text-center p-5 rounded-3xl bg-amber-50 border border-amber-200 space-y-2">
+                      <div className="p-3 rounded-2xl bg-amber-100/70 inline-flex shadow-sm">
+                        <KeyRound className="w-7 h-7 text-amber-600" />
                       </div>
-                      <p className="text-muted-foreground mb-2">OTP ของคุณคือ:</p>
-                      <div className="text-3xl font-bold tracking-[0.3em] gradient-primary bg-clip-text text-transparent">
+                      <p className="text-xs text-zinc-500 font-normal">OTP ของคุณคือ:</p>
+                      <div className="text-2xl sm:text-3xl font-bold tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-amber-600 via-yellow-600 to-amber-700">
                         {generatedOTP}
                       </div>
+                      <button
+                        type="button"
+                        onClick={handleCopyOtp}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white border border-amber-200 text-xs text-amber-800 font-medium transition-all cursor-pointer mt-1 shadow-sm hover:bg-amber-50"
+                      >
+                        {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-amber-600" />}
+                        <span>{copied ? 'Copied!' : 'Copy OTP'}</span>
+                      </button>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="otp">กรอกรหัส OTP เพื่อยืนยัน</Label>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="otp" className="text-xs font-medium text-zinc-700">กรอกรหัส OTP เพื่อยืนยัน</Label>
                       <Input
                         id="otp"
-                        placeholder="xxxxxx"
+                        placeholder="••••••"
                         value={otp}
                         onChange={(e) => {
                           setOtp(e.target.value.replace(/\D/g, '').slice(0, 6));
                           setError('');
                         }}
-                        className="text-center text-2xl tracking-[0.5em] font-mono"
+                        className="text-center text-2xl tracking-[0.3em] font-mono h-14 font-semibold text-zinc-800"
                         maxLength={6}
+                        autoFocus
                       />
                       {error && (
-                        <div className="flex items-center gap-2 text-destructive text-sm">
-                          <AlertCircle className="w-4 h-4" />
-                          {error}
+                        <div className="flex items-center gap-1.5 text-rose-600 text-xs mt-1">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>{error}</span>
                         </div>
                       )}
                     </div>
 
-                    <Button type="submit" className="w-full" size="lg">
-                      ยืนยัน OTP
+                    <Button type="submit" className="w-full h-12 font-semibold shadow-lg shadow-amber-500/20 text-sm">
+                      Verify OTP
                     </Button>
-                    <p className="text-xs text-destructive font-semibold text-center mt-3">
+                    <p className="text-xs text-rose-600 font-medium text-center">
                       รหัสจะหมดอายุใน {formatTime(otpTimeLeft)} นาที
                     </p>
                   </form>
@@ -498,31 +519,31 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
                 {/* Chat Step */}
                 {step === 'chat' && (
                   <div className="space-y-4">
-                    <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-                      <p className="text-sm text-destructive">
+                    <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200">
+                      <p className="text-xs text-rose-700">
                         ❌ คำตอบไม่ตรงกับที่บันทึกไว้ 
                         {verificationResult?.reason && (
-                          <span className="block text-muted-foreground mt-1">({verificationResult.reason})</span>
+                          <span className="block text-zinc-500 mt-1 font-normal">({verificationResult.reason})</span>
                         )}
                       </p>
                     </div>
 
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-xs text-zinc-500 font-normal">
                       กรุณาติดต่อผู้ฝากเพื่อยืนยันตัวตน เมื่อผู้ฝากอนุมัติจะส่ง OTP ให้คุณ
                     </p>
 
-                    <ScrollArea className="h-48 border rounded-lg p-3">
-                      <div className="space-y-3">
+                    <ScrollArea className="h-44 border border-zinc-200 rounded-2xl p-3 bg-zinc-50">
+                      <div className="space-y-2.5">
                         {chatMessages.map((msg) => (
                           <div
                             key={msg.id}
                             className={`flex ${msg.sender === 'claimer' ? 'justify-end' : 'justify-start'}`}
                           >
                             <div
-                              className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                              className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed ${
                                 msg.sender === 'claimer'
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted'
+                                  ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 font-medium'
+                                  : 'bg-white border border-zinc-200 text-zinc-800 font-normal shadow-sm'
                               }`}
                             >
                               {msg.message}
@@ -539,38 +560,38 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
                         onChange={(e) => setNewMessage(e.target.value)}
                         className="flex-1"
                       />
-                      <Button type="submit" size="icon">
+                      <Button type="submit" size="icon" className="h-11 w-11 shrink-0">
                         <Send className="w-4 h-4" />
                       </Button>
                     </form>
 
-                    {/* Simulate depositor approval button (for demo) */}
+                    {/* Simulate depositor approval button */}
                     <Button 
                       onClick={handleDepositorApprove} 
                       variant="outline" 
-                      className="w-full"
+                      className="w-full text-xs font-medium"
                     >
-                      🎭 จำลอง: ผู้ฝากอนุมัติ
+                      🎭 Simulate: Approve & Send OTP
                     </Button>
                   </div>
                 )}
 
                 {/* Success Step */}
                 {step === 'success' && (
-                  <div className="text-center space-y-6">
-                    <div className="p-4 rounded-2xl bg-success/10 inline-block">
-                      <CheckCircle className="w-12 h-12 text-success" />
+                  <div className="text-center space-y-5 py-4">
+                    <div className="p-4 rounded-3xl bg-emerald-50 border border-emerald-200 inline-block shadow-sm">
+                      <CheckCircle className="w-12 h-12 text-emerald-600" />
                     </div>
                     
                     <div>
-                      <p className="text-xl font-semibold text-foreground mb-2">ยืนยันสำเร็จ!</p>
-                      <p className="text-muted-foreground">
-                        ตู้ช่อง {locker.id} กำลังปลดล็อก...
+                      <p className="text-xl font-semibold text-zinc-800 mb-1">ยืนยันสำเร็จ!</p>
+                      <p className="text-xs sm:text-sm text-zinc-500 font-normal">
+                        ตู้ช่อง {String(locker.id).padStart(2, '0')} กำลังปลดล็อก...
                       </p>
                     </div>
 
-                    <Button onClick={handleConfirm} className="w-full" size="lg" variant="success">
-                      เสร็จสิ้น
+                    <Button onClick={handleConfirm} className="w-full h-12 font-semibold text-sm shadow-lg shadow-amber-500/20">
+                      Done
                     </Button>
                   </div>
                 )}

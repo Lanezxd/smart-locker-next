@@ -7,6 +7,7 @@ import { Toaster as Sonner } from '@/components/ui/sonner';
 import { useState } from 'react';
 import { ChatProvider } from '@/contexts/ChatContext';
 import { MqttSupabaseListener } from '@/components/MqttSupabaseListener';
+import { PresenceTracker } from '@/components/PresenceTracker';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
@@ -15,6 +16,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ChatProvider>
+          <PresenceTracker />
           <MqttSupabaseListener />
           <Toaster />
           <Sonner />
