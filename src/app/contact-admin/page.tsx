@@ -172,12 +172,12 @@ const ContactAdminPageContent = () => {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col relative overflow-hidden">
+    <div className="fixed inset-0 z-50 flex flex-col w-full h-full bg-zinc-50 overflow-hidden">
       {/* Background ambient lighting */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-amber-400/10 rounded-full blur-[120px] pointer-events-none" />
 
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/85 backdrop-blur-2xl border-b border-zinc-200">
+      <header className="flex-none z-50 bg-white/85 backdrop-blur-2xl border-b border-zinc-200">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
           <button onClick={handleBack} className="p-2 hover:bg-zinc-100 rounded-full transition-colors cursor-pointer text-zinc-700">
             <ChevronLeft className="w-5 h-5" />
@@ -194,7 +194,7 @@ const ContactAdminPageContent = () => {
       </header>
 
       {/* Message Feed */}
-      <div className="flex-1 overflow-y-auto max-w-2xl w-full mx-auto px-4 py-5 space-y-3.5 relative z-10">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain max-w-2xl w-full mx-auto px-4 py-5 space-y-3.5 relative z-10">
         {messages.length === 0 && (
           <div className="text-center py-16">
             <p className="text-zinc-500 text-xs sm:text-sm font-normal">Admin จะตอบกลับโดยเร็ว</p>
@@ -223,13 +223,13 @@ const ContactAdminPageContent = () => {
       </div>
 
       {/* Input Dock */}
-      <div className="sticky bottom-0 bg-white/85 backdrop-blur-2xl border-t border-zinc-200 p-3 sm:p-4 z-20">
+      <div className="flex-none z-20 bg-white/85 backdrop-blur-2xl border-t border-zinc-200 p-3 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <form onSubmit={sendMessage} className="max-w-2xl mx-auto flex gap-2">
           <input
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder="พิมพ์ข้อความถึง Admin..."
-            className="flex-1 px-4 py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-sm shadow-sm transition-all"
+            className="flex-1 px-4 py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-base md:text-sm shadow-sm transition-all"
           />
           <button
             type="submit"

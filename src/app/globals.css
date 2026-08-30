@@ -63,6 +63,14 @@
       radial-gradient(at 85% 85%, rgba(251, 191, 36, 0.03) 0px, transparent 50%);
     background-attachment: fixed;
   }
+  input, textarea, select {
+    font-size: 16px;
+  }
+  @media (min-width: 768px) {
+    input, textarea, select {
+      font-size: inherit;
+    }
+  }
 }
 
 /* Minimal Luxury Editorial Brand Typography */
@@ -120,12 +128,14 @@
 .gold-gradient-text {
   background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .gold-metallic-text {
   background: linear-gradient(135deg, #b45309 0%, #d97706 50%, #78350f 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 

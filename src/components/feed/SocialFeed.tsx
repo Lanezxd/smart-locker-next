@@ -178,6 +178,24 @@ export const SocialFeed = ({ isLoggedIn, isAdmin, userName, currentUserId, onLog
     setLocallyBlockedPosts(prev => [...prev, postId]);
   };
 
+  const scrollToTop = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      document.documentElement.scrollTo({ top: 0, behavior: 'smooth' });
+      document.body.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    const scrollContainers = document.querySelectorAll('.overflow-y-auto, .overflow-auto');
+    scrollContainers.forEach((container) => {
+      container.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }, []);
+
+  const handlePostCreated = useCallback(() => {
+    fetchPosts(true);
+    scrollToTop();
+    setTimeout(scrollToTop, 150);
+  }, [fetchPosts, scrollToTop]);
+
   return (
     <div className="min-h-screen bg-zinc-50 pb-20">
       {/* Locker Search Results - Show when searching */}
@@ -231,6 +249,7 @@ export const SocialFeed = ({ isLoggedIn, isAdmin, userName, currentUserId, onLog
       <CreatePostModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
+        onPostCreated={handlePostCreated}
         onSubmit={handleCreatePost}
         userName={userName}
       />

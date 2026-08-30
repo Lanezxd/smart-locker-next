@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useLockerTransactions } from "@/hooks/useLockerTransactions";
 import { useAuth } from "@/hooks/useAuth";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface CollectModalProps {
   locker: Locker | null;
@@ -323,12 +324,16 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     toast.success('ผู้ฝากอนุมัติแล้ว! กรุณากรอก OTP');
   };
 
-  const handleCopyOtp = () => {
+  const handleCopyOtp = async () => {
     if (!generatedOTP) return;
-    navigator.clipboard.writeText(generatedOTP);
-    setCopied(true);
-    toast.success('คัดลอกรหัส OTP แล้ว!');
-    setTimeout(() => setCopied(false), 2000);
+    const ok = await copyToClipboard(generatedOTP);
+    if (ok) {
+      setCopied(true);
+      toast.success('คัดลอกรหัส OTP แล้ว!');
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast.error('ไม่สามารถคัดลอกได้');
+    }
   };
 
   const handleConfirm = async () => {

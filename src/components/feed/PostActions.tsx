@@ -1,5 +1,6 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Edit2, Trash2, Flag, Ban, Loader2, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -27,10 +28,15 @@ export const PostActions = ({
   onDelete, 
   onBlock 
 }: PostActionsProps) => {
+  const [mounted, setMounted] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('');
   const [customReason, setCustomReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   if (!isOpen) return null;
 
@@ -167,12 +173,13 @@ export const PostActions = ({
         )}
       </div>
 
-      {/* Report Modal */}
-      {showReportModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowReportModal(false)} />
-          <div className="relative backdrop-blur-2xl bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-zinc-200">
+      {/* Report Modal - Portaled to document.body */}
+      {showReportModal && mounted && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowReportModal(false)} />
+          <div className="relative z-10 backdrop-blur-2xl bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-zinc-200 animate-slide-up">
             <button
+              type="button"
               onClick={() => setShowReportModal(false)}
               className="absolute top-4 right-4 p-1.5 hover:bg-zinc-100 rounded-full transition-colors cursor-pointer text-zinc-500 hover:text-zinc-800"
             >
@@ -185,6 +192,7 @@ export const PostActions = ({
               {['เนื้อหาไม่เหมาะสม', 'สแปมหรือโฆษณา', 'ข้อมูลเท็จ', 'อื่นๆ'].map((reason) => (
                 <button
                   key={reason}
+                  type="button"
                   onClick={() => setReportReason(reason)}
                   className={`w-full px-4 py-2.5 text-left text-xs sm:text-sm font-medium rounded-xl border transition-all cursor-pointer ${
                     reportReason === reason 
@@ -203,12 +211,13 @@ export const PostActions = ({
                 value={customReason}
                 onChange={(e) => setCustomReason(e.target.value)}
                 maxLength={500}
-                className="w-full px-4 py-2.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 resize-none mb-4 text-xs sm:text-sm shadow-sm transition-all"
+                className="w-full px-4 py-2.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 resize-none mb-4 text-base md:text-sm shadow-sm transition-all"
                 rows={3}
               />
             )}
 
             <button
+              type="button"
               onClick={handleReport}
               disabled={!reportReason || (reportReason === 'อื่นๆ' && !customReason.trim()) || submitting}
               className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 font-semibold py-3.5 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 disabled:opacity-40 flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer active:scale-[0.98]"
@@ -217,7 +226,8 @@ export const PostActions = ({
               <span>Submit Report</span>
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

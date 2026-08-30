@@ -1,5 +1,6 @@
 'use client';
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, ImagePlus, Loader2, AlertCircle, Package, Trash2, Send } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -20,6 +21,7 @@ export const CreatePostModal = ({
   onSubmit,
   currentUserId,
 }: CreatePostModalProps) => {
+  const [mounted, setMounted] = useState(false);
   const [postType, setPostType] = useState<'lost' | 'found'>('lost');
   const [content, setContent] = useState('');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -27,7 +29,11 @@ export const CreatePostModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!isOpen || !mounted) return null;
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -119,22 +125,22 @@ export const CreatePostModal = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div 
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm"
         onClick={onClose}
       />
       
-      <div className="relative z-10 w-full sm:max-w-lg backdrop-blur-2xl bg-white/95 border border-zinc-200 rounded-t-3xl sm:rounded-3xl max-h-[88vh] overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.1)] animate-slide-up">
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-100">
+      <div className="relative z-10 w-full sm:max-w-lg backdrop-blur-2xl bg-white border border-zinc-200 rounded-t-3xl sm:rounded-3xl max-h-[85vh] sm:max-h-[88vh] flex flex-col overflow-hidden shadow-2xl animate-slide-up">
+        <div className="flex-none shrink-0 flex items-center justify-between p-4 sm:p-5 border-b border-zinc-100 bg-white">
           <h2 className="text-base sm:text-lg font-semibold text-zinc-800">สร้างโพสต์ใหม่</h2>
-          <button onClick={onClose} className="p-1.5 sm:p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-500 hover:text-zinc-800 cursor-pointer">
+          <button type="button" onClick={onClose} className="p-1.5 sm:p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-500 hover:text-zinc-800 cursor-pointer">
             <X className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-4 overflow-y-auto max-h-[calc(88vh-140px)]">
+        <form id="create-post-form" onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-4">
           <div className="flex gap-2 p-1 bg-zinc-100 border border-zinc-200 rounded-2xl">
             <button
               type="button"
@@ -167,7 +173,7 @@ export const CreatePostModal = ({
               value={content}
               onChange={(e) => setContent(e.target.value)}
               rows={3}
-              className="w-full px-4 py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 text-xs sm:text-sm focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 transition-all resize-none shadow-sm"
+              className="w-full px-4 py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 text-base md:text-sm focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 transition-all resize-none shadow-sm"
               required
             />
           </div>
@@ -200,9 +206,10 @@ export const CreatePostModal = ({
           </div>
         </form>
 
-        <div className="p-4 sm:p-5 border-t border-zinc-100">
+        <div className="flex-none shrink-0 p-4 sm:p-5 border-t border-zinc-100 bg-white">
           <button
             type="submit"
+            form="create-post-form"
             onClick={handleSubmit}
             disabled={!content.trim() || isSubmitting}
             className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 font-semibold py-3.5 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 disabled:opacity-40 transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer active:scale-[0.98]"
@@ -212,6 +219,7 @@ export const CreatePostModal = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

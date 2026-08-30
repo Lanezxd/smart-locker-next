@@ -222,7 +222,7 @@ const ResetPasswordPage = () => {
                   placeholder="กรอกรหัสผ่านใหม่"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-3.5 pr-10 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-sm transition-all shadow-sm"
+                  className="w-full pl-3.5 pr-10 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-base md:text-sm transition-all shadow-sm"
                   required
                   minLength={8}
                   autoFocus
@@ -248,7 +248,7 @@ const ResetPasswordPage = () => {
                   placeholder="กรอกรหัสผ่านใหม่อีกครั้ง"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full pl-3.5 pr-10 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-sm transition-all shadow-sm"
+                  className="w-full pl-3.5 pr-10 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-base md:text-sm transition-all shadow-sm"
                   required
                   minLength={8}
                 />

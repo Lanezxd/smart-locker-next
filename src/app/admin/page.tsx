@@ -404,14 +404,14 @@ const AdminDashboardPage = () => {
                 )}
               </div>
             ) : (
-              <div className="flex flex-col h-full backdrop-blur-2xl bg-white rounded-3xl border border-zinc-200 p-4 shadow-sm">
-                <div className="flex items-center gap-3 pb-3 border-b border-zinc-100 mb-3">
+              <div className="flex flex-col h-full backdrop-blur-2xl bg-white rounded-3xl border border-zinc-200 p-4 shadow-sm overflow-hidden">
+                <div className="flex-none z-10 flex items-center gap-3 pb-3 border-b border-zinc-100 mb-3">
                   <button onClick={() => setSelectedChatUser(null)} className="p-1.5 hover:bg-zinc-100 rounded-full cursor-pointer text-zinc-700">
                     <ChevronLeft className="w-5 h-5" />
                   </button>
                   <p className="font-semibold text-sm text-zinc-800">{chatUsers.find(u => u.user_id === selectedChatUser)?.username || chatUsers.find(u => u.user_id === selectedChatUser)?.full_name || 'ผู้ใช้'}</p>
                 </div>
-                <div className="flex-1 overflow-y-auto space-y-2.5 pb-3">
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain space-y-2.5 pb-3">
                   {chatMessages.map(msg => (
                     <div key={msg.id} className={`flex ${msg.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs sm:text-sm leading-relaxed shadow-sm ${msg.sender_type === 'admin' ? 'bg-amber-100/90 border border-amber-200 text-zinc-900 font-medium rounded-tr-sm' : 'bg-zinc-100 border border-zinc-200 text-zinc-800 font-normal rounded-tl-sm'}`}>
@@ -424,7 +424,7 @@ const AdminDashboardPage = () => {
                   ))}
                   <div ref={chatEndRef} />
                 </div>
-                <form onSubmit={sendAdminMessage} className="flex gap-2 pt-3 border-t border-zinc-100">
+                <form onSubmit={sendAdminMessage} className="flex-none z-10 flex gap-2 pt-3 border-t border-zinc-100">
                   <input value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="พิมพ์ข้อความตอบกลับ..." className="flex-1 px-4 py-2.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-xs sm:text-sm shadow-sm transition-all" />
                   <button type="submit" disabled={!newMessage.trim()} className="px-4 py-2.5 bg-gradient-to-r from-amber-400 to-yellow-500 rounded-xl text-zinc-900 font-semibold disabled:opacity-40 transition-all cursor-pointer shadow-md shadow-amber-500/20">
                     <Send className="w-4 h-4 stroke-[2.2]" />

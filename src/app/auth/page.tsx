@@ -66,6 +66,9 @@ const AuthPage = () => {
   // Redirect if already logged in
   useEffect(() => {
     if (user && !authLoading) {
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      }
       router.push("/");
     }
   }, [user, authLoading, router]);

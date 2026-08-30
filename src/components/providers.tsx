@@ -18,8 +18,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <ChatProvider>
           <PresenceTracker />
           <MqttSupabaseListener />
-          <Toaster />
-          <Sonner />
           {children}
         </ChatProvider>
       </TooltipProvider>

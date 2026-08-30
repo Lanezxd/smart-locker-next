@@ -50,6 +50,7 @@ import { useAdmin } from '@/hooks/useAdmin';
 import { useLockerTransactions } from '@/hooks/useLockerTransactions';
 import { ChatRoom, ChatMessageDB } from '@/hooks/useChat';
 import { useChatContext } from '@/contexts/ChatContext';
+import { copyToClipboard } from '@/lib/clipboard';
 
 // Types
 interface LockerItem {
@@ -458,6 +459,10 @@ const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
             studentId: '',
             profileImage: profile?.avatar_url || null
           };
+          (document.activeElement as HTMLElement)?.blur();
+          if (typeof window !== 'undefined') {
+            window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+          }
           onLogin(mockUser);
         }
       } catch (err) {
@@ -522,6 +527,10 @@ const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
           studentId: '',
           profileImage: null
         };
+        (document.activeElement as HTMLElement)?.blur();
+        if (typeof window !== 'undefined') {
+          window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        }
         onLogin(mockUser);
       }
     } catch {
@@ -1065,7 +1074,7 @@ const ModeSelection = ({ handleModeSelect }: { handleModeSelect: (mode: 'finder'
     >
       <div className="flex items-center justify-between w-full mb-1">
         <span className="flex items-center gap-3">
-          <Search className="w-6 h-6 text-zinc-800 stroke-[2.2]" />
+          <Search className="w-6 h-6 text-amber-500 stroke-[2.2]" />
           <span className="text-base sm:text-lg font-bold text-zinc-900">ตามหาของหาย</span>
         </span>
         <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform text-zinc-400 stroke-[2.2]" />
@@ -1145,20 +1154,38 @@ const LoginModal = ({
   onClose: () => void; 
   onLogin: (user: UserData) => void;
 }) => {
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleClose = () => {
+    onClose();
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-        onClick={onClose}
+        className="fixed inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={handleClose}
       />
       
       {/* Modal Content */}
       <div className="relative z-10 w-full max-w-md">
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute -top-3 -right-3 z-20 w-8 h-8 bg-white border border-zinc-200 rounded-full flex items-center justify-center shadow-lg hover:bg-zinc-100 transition-colors text-zinc-700 cursor-pointer"
         >
           <X className="w-4 h-4" />
@@ -1219,9 +1246,9 @@ const DashboardView = ({
   };
 
   const handleOtpChange = (lockerId: number, value: string) => {
-    if (!/^\d*$/.test(value)) return;
-    setOtpInputs({ ...otpInputs, [lockerId]: value.slice(0, 6) });
-    setErrors({ ...errors, [lockerId]: '' });
+    const digits = value.replace(/\D/g, '').slice(0, 6);
+    setOtpInputs(prev => ({ ...prev, [lockerId]: digits }));
+    setErrors(prev => ({ ...prev, [lockerId]: '' }));
   };
 
   const handleUnlockLocker = async (locker: Locker) => {
@@ -1329,6 +1356,9 @@ const DashboardView = ({
       setOtp(0);
       setOtpGeneratedAt(null);
       setOtpTimeLeft?.(0);
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     } else {
       setErrors({ ...errors, [locker.id]: 'รหัส OTP ไม่ถูกต้อง' });
     }
@@ -1355,12 +1385,12 @@ const DashboardView = ({
           <div className={`p-2.5 rounded-xl ${
             userRole === 'finder' 
               ? 'bg-gradient-to-br from-amber-400 to-yellow-500 text-zinc-900 shadow-md shadow-amber-500/20' 
-              : 'bg-zinc-100 text-amber-600'
+              : 'bg-zinc-100 text-amber-500'
           }`}>
             {userRole === 'finder' ? (
               <Package className="w-5 h-5 stroke-[2.2]" />
             ) : (
-              <Search className="w-5 h-5" />
+              <Search className="w-5 h-5 text-amber-500 stroke-[2.2]" />
             )}
           </div>
           <div>
@@ -1494,43 +1524,54 @@ const DashboardView = ({
                   {/* OTP Input Section - Only show if OTP is set AND in receiver mode */}
                   {locker.item.otp && userRole === 'receiver' && (
                     <div 
-                      className="bg-amber-50/70 border border-amber-200 rounded-xl p-2.5 space-y-2 mt-auto"
+                      className="bg-amber-50/70 border border-amber-200 rounded-2xl p-2.5 space-y-2 mt-auto"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="flex items-center gap-1 text-[10px] text-amber-800 whitespace-nowrap font-medium">
-                        <KeyRound className="w-3 h-3 shrink-0 text-amber-600" />
+                      <div className="flex items-center justify-center gap-1 text-[7px] sm:text-[10px] md:text-xs text-amber-900 font-medium whitespace-nowrap text-center px-1 tracking-tight">
+                        <KeyRound className="w-2 h-2 sm:w-3 sm:h-3 shrink-0 text-amber-600" />
                         <span>กรอกรหัส OTP {otpTimeLeft > 0 ? `(เหลือ ${formatTime(otpTimeLeft)})` : ''}</span>
                       </div>
-                      <div className="flex gap-1.5">
+                      <div className="space-y-1.5">
                         <input
                           type="text"
                           inputMode="numeric"
-                          maxLength={6}
+                          autoComplete="one-time-code"
                           placeholder="••••••"
                           value={otpInputs[locker.id] || ''}
                           onChange={(e) => handleOtpChange(locker.id, e.target.value)}
-                          className={`flex-1 min-w-0 px-2 py-1.5 rounded-lg text-center text-xs font-semibold tracking-widest outline-none transition-all ${
+                          onPaste={(e) => {
+                            const pasteData = e.clipboardData?.getData('text');
+                            if (pasteData) {
+                              const digits = pasteData.replace(/\D/g, '').slice(0, 6);
+                              if (digits) {
+                                setOtpInputs(prev => ({ ...prev, [locker.id]: digits }));
+                                setErrors(prev => ({ ...prev, [locker.id]: '' }));
+                              }
+                            }
+                          }}
+                          className={`w-full h-8 sm:h-9 px-2 rounded-xl text-center text-xs sm:text-sm font-semibold tracking-widest outline-none transition-all box-border ${
                             errors[locker.id] 
                               ? 'bg-rose-50 border border-rose-400 text-rose-700 placeholder:text-rose-400/50' 
                               : 'bg-white border border-zinc-300 text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-900'
                           }`}
                         />
                         <button
+                          type="button"
                           onClick={() => handleUnlockLocker(locker)}
                           disabled={unlocking === locker.id || (otpInputs[locker.id] || '').length !== 6}
-                          className="px-3 py-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 rounded-lg font-semibold flex items-center justify-center hover:shadow-md hover:shadow-amber-500/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 text-xs cursor-pointer"
+                          className="w-full h-8 sm:h-9 px-2 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 rounded-xl font-semibold flex items-center justify-center hover:shadow-md hover:shadow-amber-500/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed text-xs sm:text-sm cursor-pointer active:scale-[0.98] box-border"
                         >
                           {unlocking === locker.id ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-900" />
                           ) : (
-                            <Unlock className="w-3.5 h-3.5 stroke-[2.2]" />
+                            <span>Unlock</span>
                           )}
                         </button>
                       </div>
                       {errors[locker.id] && (
-                        <p className="text-[10px] text-rose-600 flex items-center gap-1 font-normal">
-                          <AlertCircle className="w-2.5 h-2.5" />
-                          {errors[locker.id]}
+                        <p className="text-[10px] text-rose-600 flex items-center justify-center gap-1 font-normal text-center">
+                          <AlertCircle className="w-2.5 h-2.5 shrink-0" />
+                          <span>{errors[locker.id]}</span>
                         </p>
                       )}
                     </div>
@@ -1611,132 +1652,175 @@ const DepositView = ({
   setDepositForm: (form: DepositFormData) => void;
   handleDeposit: () => void;
   loading: boolean;
-}) => (
-  <div className="max-w-2xl mx-auto px-4 py-4 sm:py-6 animate-fade-in">
-    <button
-      onClick={() => setView('dashboard')}
-      className="mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
-    >
-      <ChevronLeft className="w-4 h-4" />
-      <span>Back to Dashboard</span>
-    </button>
+}) => {
+  // Listen for keyboard dismiss / viewport resize on mobile
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
 
-    <div className="backdrop-blur-2xl bg-white/95 rounded-3xl p-6 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
-      <div className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-100">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">ฝากของ</h2>
-          <p className="text-xs sm:text-sm text-zinc-500 mt-1 font-normal leading-relaxed">
-            กรอกรายละเอียดสำหรับตู้หมายเลข <span className="font-semibold text-zinc-700">#{String(selectedLocker?.id || 0).padStart(2, '0')}</span>
-          </p>
-        </div>
-        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-zinc-900 flex items-center justify-center shadow-md shadow-amber-500/20">
-          <Package className="w-6 h-6 stroke-[2.2]" />
-        </div>
-      </div>
+    const handleResetScroll = () => {
+      setTimeout(() => {
+        const activeEl = document.activeElement;
+        const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+        if (!isTyping) {
+          window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+        }
+      }, 100);
+    };
 
-      <div className="space-y-6">
-        {/* Step 1: Upload Photo */}
-        <div className="space-y-2">
-          <label className="block text-sm sm:text-base font-semibold text-zinc-900">1. อัปโหลดรูปสิ่งของ</label>
-          {depositForm.image ? (
-            <div className="relative rounded-2xl overflow-hidden border border-zinc-200 bg-zinc-900/[0.03] shadow-sm flex items-center justify-center">
-              <img src={depositForm.image} alt="Preview" className="w-full max-h-72 sm:max-h-80 object-contain rounded-2xl" />
-              <button
-                type="button"
-                onClick={() => setDepositForm({ ...depositForm, image: null })}
-                className="absolute top-2 right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg cursor-pointer hover:bg-rose-600 transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <label className="w-full border-2 border-dashed border-zinc-300 hover:border-zinc-900 bg-zinc-50/80 rounded-2xl p-6 flex flex-col items-center justify-center transition-all cursor-pointer group">
-              <Upload className="w-8 h-8 text-zinc-400 group-hover:text-zinc-900 mb-2 transition-colors stroke-[1.8]" />
-              <span className="text-sm font-medium text-zinc-800 group-hover:text-zinc-950 text-center transition-colors">เลือกรูปจากอุปกรณ์</span>
-              <span className="text-xs text-zinc-400 mt-1 font-normal">รองรับ JPG, PNG</span>
-              <input type="file" accept="image/*" className="hidden" onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onloadend = () => { setDepositForm({ ...depositForm, image: reader.result as string }); };
-                  reader.readAsDataURL(file);
-                }
-              }} />
-            </label>
-          )}
-        </div>
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResetScroll);
+    }
 
-        {/* Step 2: Details */}
-        <div className="space-y-2">
-          <label className="block text-sm sm:text-base font-semibold text-zinc-900">2. สิ่งที่พบ</label>
-          <input
-            type="text"
-            placeholder="เช่น กุญแจรถ, กระเป๋าสตางค์"
-            className="w-full px-4 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-sm shadow-sm transition-all"
-            value={depositForm.name}
-            onChange={(e) => setDepositForm({ ...depositForm, name: e.target.value })}
-          />
-        </div>
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleResetScroll);
+      }
+    };
+  }, []);
 
-        {/* Step 3: Security */}
-        <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl p-5 sm:p-6 space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-zinc-200/80 flex items-center justify-center text-zinc-700 shrink-0">
-              <ShieldCheck className="w-5 h-5 stroke-[2]" />
-            </div>
-            <h3 className="font-semibold text-sm sm:text-base text-zinc-900 leading-snug">
-              ตั้งคำถามที่เจ้าของตัวจริงเท่านั้นที่รู้
-            </h3>
+  const handleInputBlur = () => {
+    setTimeout(() => {
+      const activeEl = document.activeElement;
+      const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+      if (!isTyping && typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+      }
+    }, 120);
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto px-3 sm:px-4 py-2.5 sm:py-6 animate-fade-in">
+      <button
+        onClick={() => setView('dashboard')}
+        className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+      >
+        <ChevronLeft className="w-4 h-4" />
+        <span>Back to Dashboard</span>
+      </button>
+
+      <div className="backdrop-blur-2xl bg-white/95 rounded-2xl sm:rounded-3xl p-4 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
+        <div className="flex items-center justify-between mb-3 sm:mb-6 pb-2.5 sm:pb-4 border-b border-zinc-100">
+          <div>
+            <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-zinc-900">ฝากของ</h2>
+            <p className="text-[11px] sm:text-sm text-zinc-500 mt-0.5 sm:mt-1 font-normal leading-relaxed">
+              กรอกรายละเอียดสำหรับตู้หมายเลข <span className="font-semibold text-zinc-700">#{String(selectedLocker?.id || 0).padStart(2, '0')}</span>
+            </p>
           </div>
-
-          <div className="space-y-3.5 pt-1">
-            <div className="space-y-1.5">
-              <label className="block text-xs sm:text-sm font-medium text-zinc-800">คำถาม</label>
-              <input
-                type="text"
-                placeholder="เช่น รุ่นอะไร หรือมีตำหนิตรงไหน"
-                className="w-full px-4 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-sm shadow-sm transition-all"
-                value={depositForm.question}
-                onChange={(e) => setDepositForm({ ...depositForm, question: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="block text-xs sm:text-sm font-medium text-zinc-800">คำตอบเฉลย</label>
-              <input
-                type="text"
-                placeholder="คำตอบที่ถูกต้อง"
-                className="w-full px-4 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-sm shadow-sm transition-all"
-                value={depositForm.answer}
-                onChange={(e) => setDepositForm({ ...depositForm, answer: e.target.value })}
-              />
-            </div>
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-zinc-900 flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
+            <Package className="w-4 h-4 sm:w-6 sm:h-6 stroke-[2.2]" />
           </div>
         </div>
-      </div>
 
-      {/* Action Button */}
-      <div className="mt-8">
-        <button
-          onClick={handleDeposit}
-          disabled={loading || !depositForm.image || !depositForm.name || !depositForm.question || !depositForm.answer}
-          className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 font-semibold py-3.5 sm:py-4 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base cursor-pointer active:scale-[0.98]"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin text-zinc-900" />
-              <span>กำลังเชื่อมต่อตู้...</span>
-            </>
-          ) : (
-            <>
+        <div className="space-y-3 sm:space-y-6">
+          {/* Step 1: Upload Photo */}
+          <div className="space-y-1 sm:space-y-2">
+            <label className="block text-xs sm:text-base font-semibold text-zinc-900">1. อัปโหลดรูปสิ่งของ</label>
+            {depositForm.image ? (
+              <div className="relative h-36 sm:h-auto sm:max-h-80 rounded-xl sm:rounded-2xl overflow-hidden border border-zinc-200 bg-zinc-900/[0.03] shadow-sm flex items-center justify-center">
+                <img src={depositForm.image} alt="Preview" className="w-full h-full sm:max-h-80 object-contain rounded-xl sm:rounded-2xl" />
+                <button
+                  type="button"
+                  onClick={() => setDepositForm({ ...depositForm, image: null })}
+                  className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg cursor-pointer hover:bg-rose-600 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <label className="w-full h-36 sm:h-auto sm:min-h-[160px] border-2 border-dashed border-zinc-300 hover:border-zinc-900 bg-zinc-50/80 rounded-xl sm:rounded-2xl p-3 sm:p-6 flex flex-col items-center justify-center transition-all cursor-pointer group">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white shadow-xs border border-zinc-200/80 flex items-center justify-center mb-1.5 sm:mb-2 group-hover:border-zinc-400 transition-colors">
+                  <Upload className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-400 group-hover:text-zinc-900 transition-colors stroke-[2]" />
+                </div>
+                <span className="text-xs sm:text-sm text-zinc-400 sm:text-zinc-800 font-normal sm:font-medium group-hover:text-zinc-950 text-center transition-colors">
+                  เลือกรูปจากอุปกรณ์
+                </span>
+                <span className="hidden sm:inline text-xs text-zinc-400 mt-1 font-normal text-center">
+                  รองรับ JPG, PNG
+                </span>
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => { setDepositForm({ ...depositForm, image: reader.result as string }); };
+                    reader.readAsDataURL(file);
+                  }
+                }} />
+              </label>
+            )}
+          </div>
+
+          {/* Step 2: Details */}
+          <div className="space-y-1 sm:space-y-2">
+            <label className="block text-xs sm:text-base font-semibold text-zinc-900">2. สิ่งที่พบ</label>
+            <input
+              type="text"
+              placeholder="เช่น กุญแจรถ, กระเป๋าสตางค์"
+              className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+              value={depositForm.name}
+              onChange={(e) => setDepositForm({ ...depositForm, name: e.target.value })}
+              onBlur={handleInputBlur}
+            />
+          </div>
+
+          {/* Step 3: Security */}
+          <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 space-y-2.5 sm:space-y-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-zinc-200/80 flex items-center justify-center text-zinc-700 shrink-0">
+                <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
+              </div>
+              <h3 className="font-semibold text-xs sm:text-base text-zinc-900 leading-snug">
+                ตั้งคำถามที่เจ้าของตัวจริงเท่านั้นที่รู้
+              </h3>
+            </div>
+
+            <div className="space-y-2 sm:space-y-3.5 pt-0.5 sm:pt-1">
+              <div className="space-y-1 sm:space-y-1.5">
+                <label className="block text-xs sm:text-sm font-semibold text-zinc-800">คำถาม</label>
+                <input
+                  type="text"
+                  placeholder="เช่น รุ่นอะไร หรือมีตำหนิตรงไหน"
+                  className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                  value={depositForm.question}
+                  onChange={(e) => setDepositForm({ ...depositForm, question: e.target.value })}
+                  onBlur={handleInputBlur}
+                />
+              </div>
+              <div className="space-y-1 sm:space-y-1.5">
+                <label className="block text-xs sm:text-sm font-semibold text-zinc-800">คำตอบเฉลย</label>
+                <input
+                  type="text"
+                  placeholder="คำตอบที่ถูกต้อง"
+                  className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                  value={depositForm.answer}
+                  onChange={(e) => setDepositForm({ ...depositForm, answer: e.target.value })}
+                  onBlur={handleInputBlur}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Button */}
+        <div className="mt-4 sm:mt-8">
+          <button
+            onClick={handleDeposit}
+            disabled={loading || !depositForm.image || !depositForm.name || !depositForm.question || !depositForm.answer}
+            className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 font-semibold py-2.5 sm:py-4 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-xs sm:text-base cursor-pointer active:scale-[0.98]"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-zinc-900" />
+                <span>กำลังเชื่อมต่อตู้...</span>
+              </>
+            ) : (
               <span>Unlock</span>
-              <Unlock className="w-4 h-4 stroke-[2.2]" />
-            </>
-          )}
-        </button>
+            )}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // Helper to format full Thai deposit date and time (e.g. 16 ส.ค. 2569 เวลา 18:28 น.)
 const formatThaiDepositDateTime = (item?: LockerItem | null) => {
@@ -1789,40 +1873,50 @@ const VerifyView = ({
   const isInputValid = verifyAnswer.trim().length > 0;
   const isButtonDisabled = aiThinking || !isInputValid || attempts >= maxAttempts;
 
+  const handleInputBlur = () => {
+    setTimeout(() => {
+      const activeEl = document.activeElement;
+      const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+      if (!isTyping && typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+      }
+    }, 120);
+  };
+
   return (
-    <div className="max-w-2xl mx-auto px-4 py-4 sm:py-6 animate-fade-in">
+    <div className="max-w-2xl mx-auto px-3.5 sm:px-4 py-4 sm:py-6 min-h-[calc(100dvh-80px)] sm:min-h-0 flex flex-col justify-center animate-fade-in">
       <button
         onClick={() => setView('dashboard')}
-        className="mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+        className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer w-fit"
       >
         <ChevronLeft className="w-4 h-4" />
         <span>Back to Dashboard</span>
       </button>
 
-      <div className="backdrop-blur-2xl bg-white/95 rounded-3xl p-6 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-100">
+      <div className="backdrop-blur-2xl bg-white/95 rounded-2xl sm:rounded-3xl p-4 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
+        <div className="flex items-center justify-between mb-3 sm:mb-6 pb-2.5 sm:pb-4 border-b border-zinc-100">
           <div>
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">ยืนยันความเป็นเจ้าของ</h2>
-            <p className="text-xs sm:text-sm text-zinc-500 mt-1 font-normal leading-relaxed">
+            <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-zinc-900">ยืนยันความเป็นเจ้าของ</h2>
+            <p className="text-xs sm:text-sm text-zinc-500 mt-0.5 sm:mt-1 font-normal leading-relaxed">
               ตอบคำถามให้ถูกต้องเพื่อปลดล็อกตู้ <span className="font-semibold text-zinc-700">#{String(selectedLocker?.id || 0).padStart(2, '0')}</span>
             </p>
           </div>
         </div>
 
         {/* Item Card */}
-        <div className="backdrop-blur-md bg-zinc-50/80 border border-zinc-200/80 rounded-2xl p-4 flex items-center gap-3.5 mb-5">
-          <div className="w-16 h-16 rounded-xl bg-white overflow-hidden flex-shrink-0 border border-zinc-200/80 shadow-xs flex items-center justify-center">
+        <div className="backdrop-blur-md bg-zinc-50/80 border border-zinc-200/80 rounded-xl sm:rounded-2xl p-3 sm:p-4 flex items-center gap-3 mb-3 sm:mb-5">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl bg-white overflow-hidden shrink-0 border border-zinc-200/80 shadow-xs flex items-center justify-center">
             {selectedLocker?.item?.image ? (
-              <img src={selectedLocker.item.image} alt={selectedLocker?.item?.name || 'Item'} className="w-16 h-16 rounded-xl object-cover" />
+              <img src={selectedLocker.item.image} alt={selectedLocker?.item?.name || 'Item'} className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl object-cover" />
             ) : (
-              <Package className="w-7 h-7 text-zinc-400" />
+              <Package className="w-5 h-5 sm:w-7 sm:h-7 text-zinc-400" />
             )}
           </div>
           <div className="flex-1 min-w-0 flex flex-col justify-center">
-            <h3 className="text-base sm:text-lg font-bold text-zinc-900 truncate leading-snug">
+            <h3 className="text-sm sm:text-lg font-bold text-zinc-900 truncate leading-snug">
               {selectedLocker?.item?.name}
             </h3>
-            <p className="mt-1 text-xs text-zinc-500 font-normal flex items-center gap-1.5 truncate">
+            <p className="mt-0.5 sm:mt-1 text-[11px] sm:text-xs text-zinc-500 font-normal flex items-center gap-1.5 truncate">
               <span>ฝากเมื่อ:</span>
               <span className="text-zinc-700 font-medium">{formatThaiDepositDateTime(selectedLocker?.item)}</span>
             </p>
@@ -1830,8 +1924,8 @@ const VerifyView = ({
         </div>
 
         {/* Question & Answer Box (Clean Minimal) */}
-        <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl p-4 sm:p-5 mb-6">
-          <label className="block text-sm sm:text-base font-semibold text-zinc-900 mb-2.5 leading-snug">
+        <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 mb-4 sm:mb-6">
+          <label className="block text-xs sm:text-base font-semibold text-zinc-900 mb-2 sm:mb-2.5 leading-snug">
             {selectedLocker?.item?.question || 'ระบุข้อมูลลักษณะของสิ่งของ'}
           </label>
 
@@ -1839,31 +1933,31 @@ const VerifyView = ({
             <input
               type="text"
               placeholder="ระบุคำตอบหรือรายละเอียดลักษณะเฉพาะ..."
-              className="w-full px-4 py-3 sm:py-3.5 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 text-sm shadow-sm transition-all"
+              className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
               value={verifyAnswer}
               onChange={(e) => setVerifyAnswer(e.target.value)}
-              autoFocus
+              onBlur={handleInputBlur}
               disabled={attempts >= maxAttempts}
             />
           </div>
           {attempts >= maxAttempts || remaining === 0 ? (
-            <p className="text-xs text-rose-600 mt-2.5 text-left font-medium flex items-center gap-1.5 animate-fade-in">
+            <p className="text-xs text-rose-600 mt-2 text-left font-medium flex items-center gap-1.5 animate-fade-in">
               <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-500" />
               <span>ตอบคำถามครบกำหนด กรุณาแชทกับผู้ฝาก</span>
             </p>
           ) : (
-            <p className="text-xs text-zinc-500 mt-2.5 text-left font-normal">
+            <p className="text-[11px] sm:text-xs text-zinc-500 mt-2 sm:mt-2.5 text-left font-normal">
               เหลือโอกาสตอบอีก <span className="font-semibold text-zinc-700">{remaining}</span> ครั้ง
             </p>
           )}
         </div>
 
         {/* Action Buttons */}
-        <div className="space-y-2.5">
+        <div className="space-y-2 sm:space-y-2.5">
           <button
             onClick={handleVerify}
             disabled={isButtonDisabled}
-            className={`w-full py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 text-sm sm:text-base font-semibold select-none ${
+            className={`w-full py-2.5 sm:py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 text-xs sm:text-base font-semibold select-none ${
               isButtonDisabled
                 ? 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed shadow-none'
                 : 'bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-400/35 hover:scale-[1.02] active:scale-[0.98] cursor-pointer'
@@ -1881,7 +1975,7 @@ const VerifyView = ({
           
           <button
             onClick={onStartChat}
-            className="w-full py-3 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100/70 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            className="w-full py-2 sm:py-3 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100/70 rounded-xl text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
             <MessageSquare className="w-4 h-4 text-zinc-500 stroke-[2]" />
             <span>แชทกับผู้ฝาก</span>
@@ -2093,116 +2187,126 @@ const ChatView = ({
   };
 
   return (
-    <div className="flex flex-col h-screen bg-zinc-50">
+    <div className="fixed inset-0 z-50 flex flex-col w-full h-full bg-zinc-50 overflow-hidden">
       {/* Chat Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-200 bg-white/85 backdrop-blur-2xl">
-        <button onClick={() => setView('chat_list')} className="text-zinc-600 hover:text-zinc-800 p-1 rounded-full cursor-pointer">
-          <ChevronLeft className="w-6 h-6" />
-        </button>
-        <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
-          <User className="w-5 h-5" />
-        </div>
-        <div className="flex-1">
-          <h3 className="font-semibold text-sm text-zinc-800">{otherUserName}</h3>
-          <p className="text-[10px] text-zinc-500 font-normal">ตู้ #{String(chatRoom?.locker_id || selectedLocker?.id || 0).padStart(2, '0')}</p>
+      <div className="flex-none z-20 border-b border-zinc-200 bg-white/85 backdrop-blur-2xl">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+          <button onClick={() => setView('chat_list')} className="text-zinc-600 hover:text-zinc-800 p-1 rounded-full cursor-pointer">
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+            <User className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-semibold text-sm text-zinc-800">{otherUserName}</h3>
+            <p className="text-[10px] text-zinc-500 font-normal">ตู้ #{String(chatRoom?.locker_id || selectedLocker?.id || 0).padStart(2, '0')}</p>
+          </div>
         </div>
       </div>
 
       {/* Depositor: Send OTP button with 10-min countdown */}
       {isDepositor && (
-        <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 backdrop-blur-md">
-          <button
-            onClick={handleSendOtp}
-            disabled={sendingOtp || otpCooldown > 0}
-            className={`w-full py-2.5 font-semibold rounded-xl flex items-center justify-center gap-2 shadow-md transition-all text-xs sm:text-sm active:scale-[0.98] ${
-              otpCooldown > 0
-                ? 'bg-zinc-200 text-zinc-500 cursor-not-allowed shadow-none border border-zinc-300'
-                : 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 shadow-amber-500/20 hover:shadow-amber-400/30 cursor-pointer disabled:opacity-40'
-            }`}
-          >
-            {sendingOtp ? (
-              <Loader2 className="w-4 h-4 animate-spin text-zinc-900" />
-            ) : (
-              <KeyRound className="w-4 h-4 stroke-[2.2]" />
-            )}
-            <span>
-              {otpCooldown > 0 
-                ? `Send OTP to Receiver (เหลือ ${formatTime(otpCooldown)})` 
-                : 'Send OTP to Receiver'}
-            </span>
-          </button>
+        <div className="flex-none z-10 border-b border-amber-200 bg-amber-50 backdrop-blur-md">
+          <div className="max-w-2xl mx-auto px-4 py-2.5">
+            <button
+              onClick={handleSendOtp}
+              disabled={sendingOtp || otpCooldown > 0}
+              className={`w-full py-2.5 font-semibold rounded-xl flex items-center justify-center gap-2 shadow-md transition-all text-xs sm:text-sm active:scale-[0.98] ${
+                otpCooldown > 0
+                  ? 'bg-zinc-200 text-zinc-500 cursor-not-allowed shadow-none border border-zinc-300'
+                  : 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 shadow-amber-500/20 hover:shadow-amber-400/30 cursor-pointer disabled:opacity-40'
+              }`}
+            >
+              {sendingOtp ? (
+                <Loader2 className="w-4 h-4 animate-spin text-zinc-900" />
+              ) : (
+                <KeyRound className="w-4 h-4 stroke-[2.2]" />
+              )}
+              <span>
+                {otpCooldown > 0 
+                  ? `Send OTP to Receiver (เหลือ ${formatTime(otpCooldown)})` 
+                  : 'Send OTP to Receiver'}
+              </span>
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-zinc-50">
-        {chatMessages.length === 0 && (
-          <div className="text-center py-16 text-zinc-400 text-xs sm:text-sm space-y-2 font-normal">
-            <MessageSquare className="w-8 h-8 mx-auto text-zinc-300" />
-            <p>เริ่มพูดคุยกันได้เลย</p>
-          </div>
-        )}
-        {chatMessages.map((msg) => {
-          const isMe = msg.sender_id === currentUserId;
-          const isOtpMsg = msg.message_type === 'otp_sent';
-          
-          return (
-            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-              {isOtpMsg ? (() => {
-                const otpMatch = msg.content.match(/\d{6}/);
-                const otpCode = otpMatch ? otpMatch[0] : '';
-                const otpDigits = otpCode.split('');
-                return (
-                  <div className={`w-full max-w-[290px] ${isMe ? 'ml-auto' : ''}`}>
-                    <div className="backdrop-blur-2xl bg-white border border-amber-300 rounded-3xl p-4 shadow-sm">
-                      <p className="text-center text-xs font-semibold text-amber-800 mb-2.5">รหัส OTP ของคุณ</p>
-                      <div className="flex justify-center gap-1.5 mb-3">
-                        {otpDigits.map((digit, i) => (
-                          <div key={i} className="w-9 h-11 border border-amber-300 rounded-xl flex items-center justify-center bg-amber-50 shadow-inner">
-                            <span className="text-lg font-semibold text-amber-800">{digit}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(otpCode);
-                          toast.success('คัดลอกรหัส OTP แล้ว!');
-                        }}
-                        className="w-full py-2 bg-amber-50 border border-amber-200 text-amber-800 font-medium rounded-xl flex items-center justify-center gap-1.5 hover:bg-amber-100 transition-all text-xs cursor-pointer shadow-sm"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy OTP</span>
-                      </button>
-                      {!isDepositor && otpCode && (
-                        <button
-                          onClick={() => handleReceiveOtp(otpCode)}
-                          className="w-full mt-2 py-2 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 hover:shadow-amber-400/30 transition-all text-xs cursor-pointer active:scale-[0.98]"
-                        >
-                          <Unlock className="w-3.5 h-3.5 stroke-[2.2]" />
-                          <span>Unlock Locker</span>
-                        </button>
-                      )}
-                      <p className="text-center text-[10px] text-zinc-400 mt-2 font-normal">รหัสจะหมดอายุใน 10 นาที</p>
-                    </div>
-                  </div>
-                );
-              })() : (
-                <div className={`max-w-[78%] px-4 py-2.5 rounded-2xl text-xs sm:text-sm leading-relaxed shadow-sm ${
-                  isMe 
-                    ? 'bg-amber-100/90 border border-amber-200 text-zinc-900 font-medium rounded-tr-sm' 
-                    : 'backdrop-blur-md bg-white border border-zinc-200 text-zinc-800 font-normal rounded-tl-sm'
-                }`}>
-                  <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                </div>
-              )}
+      {/* Messages Feed */}
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 bg-zinc-50">
+        <div className="max-w-2xl mx-auto space-y-3">
+          {chatMessages.length === 0 && (
+            <div className="text-center py-16 text-zinc-400 text-xs sm:text-sm space-y-2 font-normal">
+              <MessageSquare className="w-8 h-8 mx-auto text-zinc-300" />
+              <p>เริ่มพูดคุยกันได้เลย</p>
             </div>
-          );
-        })}
-        <div ref={messagesEndRef} />
+          )}
+          {chatMessages.map((msg) => {
+            const isMe = msg.sender_id === currentUserId;
+            const isOtpMsg = msg.message_type === 'otp_sent';
+            
+            return (
+              <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                {isOtpMsg ? (() => {
+                  const otpMatch = msg.content.match(/\d{6}/);
+                  const otpCode = otpMatch ? otpMatch[0] : '';
+                  const otpDigits = otpCode.split('');
+                  return (
+                    <div className={`w-full max-w-[290px] ${isMe ? 'ml-auto' : ''}`}>
+                      <div className="backdrop-blur-2xl bg-white border border-amber-300 rounded-3xl p-4 shadow-sm">
+                        <p className="text-center text-xs font-semibold text-amber-800 mb-2.5">รหัส OTP ของคุณ</p>
+                        <div className="flex justify-center gap-1.5 mb-3">
+                          {otpDigits.map((digit, i) => (
+                            <div key={i} className="w-9 h-11 border border-amber-300 rounded-xl flex items-center justify-center bg-amber-50 shadow-inner">
+                              <span className="text-lg font-semibold text-amber-800">{digit}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          onClick={async () => {
+                            const ok = await copyToClipboard(otpCode);
+                            if (ok) {
+                              toast.success('คัดลอกรหัส OTP แล้ว!');
+                            } else {
+                              toast.error('ไม่สามารถคัดลอกได้');
+                            }
+                          }}
+                          className="w-full py-2 bg-amber-50 border border-amber-200 text-amber-800 font-medium rounded-xl flex items-center justify-center gap-1.5 hover:bg-amber-100 transition-all text-xs cursor-pointer shadow-sm"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy OTP</span>
+                        </button>
+                        {!isDepositor && otpCode && (
+                          <button
+                            onClick={() => handleReceiveOtp(otpCode)}
+                            className="w-full mt-2 py-2 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 hover:shadow-amber-400/30 transition-all text-xs cursor-pointer active:scale-[0.98]"
+                          >
+                            <Unlock className="w-3.5 h-3.5 stroke-[2.2]" />
+                            <span>Unlock Locker</span>
+                          </button>
+                        )}
+                        <p className="text-center text-[10px] text-zinc-400 mt-2 font-normal">รหัสจะหมดอายุใน 10 นาที</p>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div className={`max-w-[78%] px-4 py-2.5 rounded-2xl text-xs sm:text-sm leading-relaxed shadow-sm ${
+                    isMe 
+                      ? 'bg-amber-100/90 border border-amber-200 text-zinc-900 font-medium rounded-tr-sm' 
+                      : 'backdrop-blur-md bg-white border border-zinc-200 text-zinc-800 font-normal rounded-tl-sm'
+                  }`}>
+                    <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* Input Area */}
-      <div className="p-3 sm:p-4 border-t border-zinc-200 bg-white/85 backdrop-blur-2xl">
+      {/* Input Area (Footer) */}
+      <div className="flex-none z-20 border-t border-zinc-200 bg-white/85 backdrop-blur-2xl p-3 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="flex items-center gap-2 max-w-2xl mx-auto">
           <input
             type="text"
@@ -2248,12 +2352,12 @@ const OtpDisplayView = ({
   };
   
   const handleCopyOtp = async () => {
-    try {
-      await navigator.clipboard.writeText(otpString);
+    const ok = await copyToClipboard(otpString);
+    if (ok) {
       setCopied(true);
       toast.success('คัดลอกรหัส OTP แล้ว!');
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       toast.error('ไม่สามารถคัดลอกได้');
     }
   };
@@ -2383,14 +2487,33 @@ const OtpView = ({
   };
 
   const handleInputChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return;
+    const digits = value.replace(/\D/g, '');
+    if (!digits) {
+      const newOtp = [...otpInput];
+      newOtp[index] = '';
+      setOtpInput(newOtp);
+      setError('');
+      return;
+    }
     
+    if (digits.length > 1) {
+      const newOtp = [...otpInput];
+      for (let i = 0; i < digits.length && index + i < 6; i++) {
+        newOtp[index + i] = digits[i];
+      }
+      setOtpInput(newOtp);
+      setError('');
+      const nextFocus = Math.min(5, index + digits.length);
+      inputRefs.current[nextFocus]?.focus();
+      return;
+    }
+
     const newOtp = [...otpInput];
-    newOtp[index] = value.slice(-1);
+    newOtp[index] = digits;
     setOtpInput(newOtp);
     setError('');
 
-    if (value && index < 5) {
+    if (index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
   };
@@ -2402,15 +2525,20 @@ const OtpView = ({
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
-    e.preventDefault();
-    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    const newOtp = [...otpInput];
-    for (let i = 0; i < pastedData.length; i++) {
-      newOtp[i] = pastedData[i];
-    }
-    setOtpInput(newOtp);
-    if (pastedData.length === 6) {
-      inputRefs.current[5]?.focus();
+    const pasteText = e.clipboardData.getData('text');
+    if (pasteText) {
+      const pastedData = pasteText.replace(/\D/g, '').slice(0, 6);
+      if (pastedData) {
+        e.preventDefault();
+        const newOtp = [...otpInput];
+        for (let i = 0; i < pastedData.length; i++) {
+          newOtp[i] = pastedData[i];
+        }
+        setOtpInput(newOtp);
+        if (pastedData.length === 6) {
+          inputRefs.current[5]?.focus();
+        }
+      }
     }
   };
 
@@ -2496,6 +2624,9 @@ const OtpView = ({
     setLockers(lockers.map(l => l.id === selectedLocker?.id ? { ...l, status: 'available' as const, item: null } : l));
     toast.success('รับของสำเร็จ!');
     resetState();
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   if (unlocked) {
@@ -3125,6 +3256,13 @@ function SmartLockerContent() {
     } catch {}
   }, [view, userRole, selectedLocker?.id, activeRoomId]);
 
+  // Auto-scroll to top whenever view or userRole changes so header and Back to Home are visible
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }, [view, userRole]);
+
   // Sync view and role from searchParams
   useEffect(() => {
     const tab = searchParams?.get('tab');
@@ -3522,6 +3660,9 @@ function SmartLockerContent() {
   const handleLogin = (user: UserData) => {
     setCurrentUser(user);
     setShowLoginModal(false);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }
     toast.success(`ยินดีต้อนรับ, ${user.name}!`);
   };
 
@@ -3549,6 +3690,9 @@ function SmartLockerContent() {
   const handleModeSelect = (mode: 'finder' | 'receiver') => {
     setUserRole(mode);
     setView('dashboard');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
   };
 
   const handleDeposit = async () => {
@@ -3597,6 +3741,9 @@ function SmartLockerContent() {
         setView('dashboard');
         setSelectedLocker(null);
         setDepositForm({ name: '', image: null, question: '', answer: '' });
+        if (typeof window !== 'undefined') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       } else {
         toast.error('เกิดข้อผิดพลาด กรุณาลองใหม่');
       }
