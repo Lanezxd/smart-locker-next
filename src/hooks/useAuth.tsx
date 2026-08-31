@@ -183,7 +183,11 @@ export const useAuth = () => {
   };
 
   const resetPasswordForEmail = async (email: string) => {
-    const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
+    const baseUrl = typeof window !== 'undefined' 
+      ? window.location.origin 
+      : (process.env.NEXT_PUBLIC_APP_URL || 'https://lostreturn.me');
+    const redirectTo = `${baseUrl.replace(/\/+$/, '')}/reset-password`;
+
     const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo
     });

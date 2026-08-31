@@ -588,7 +588,11 @@ const AuthForm = ({ onLogin }: { onLogin: (user: UserData) => void }) => {
     setForgotLoading(true);
 
     try {
-      const redirectTo = `${window.location.origin}/reset-password`;
+      const baseUrl = typeof window !== 'undefined' 
+        ? window.location.origin 
+        : (process.env.NEXT_PUBLIC_APP_URL || 'https://lostreturn.me');
+      const redirectTo = `${baseUrl.replace(/\/+$/, '')}/reset-password`;
+
       const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), {
         redirectTo
       });

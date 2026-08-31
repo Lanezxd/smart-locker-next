@@ -28,11 +28,11 @@ function generateMinimalEmailHtml(chatLink: string): string {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
   </head>
-  <body style="margin: 0; padding: 24px; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-    <h1 style="font-size: 24px; font-weight: bold; color: #000000; margin: 0 0 16px 0;">มีคนพยายามติดต่อคุณผ่านหน้าเว็บ</h1>
-    <p style="font-size: 16px; color: #333333; margin: 0 0 24px 0; line-height: 1.5;">คุณสามารถเข้าเว็บผ่านลิงค์ด้านล่าง</p>
-    <p style="margin: 0;">
-      <a href="${chatLink}" style="font-size: 16px; color: #2563eb; text-decoration: underline; word-break: break-all;">${chatLink}</a>
+  <body style="margin: 0; padding: 24px; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; text-align: left;">
+    <h1 style="font-size: 22px; font-weight: bold; color: #18181b; margin: 0 0 12px 0; text-align: left;">คุณมีข้อความใหม่</h1>
+    <p style="font-size: 15px; color: #52525b; margin: 0 0 24px 0; line-height: 1.6; text-align: left;">มีผู้ใช้งานส่งข้อความหาคุณเกี่ยวกับรายการสิ่งของ สามารถเข้าสู่ระบบเพื่ออ่านข้อความและตอบกลับได้ทันที</p>
+    <p style="margin: 0; text-align: left;">
+      <a href="${chatLink}" style="font-size: 15px; color: #2563eb; text-decoration: underline; font-weight: 500;">เปิดเว็บไซต์</a>
     </p>
   </body>
 </html>`;
@@ -83,19 +83,24 @@ export async function POST(req: Request) {
 
     // Determine notification context: Locker Chat (Case A) vs Admin Chat (Case B)
     const isLockerChat = Boolean(body.roomId || body.room_id || (body.type === 'locker' && !body.sender_type));
-    const appUrl = (process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://lostreturn.vercel.app').replace(/\/$/, '');
+    const baseUrl = (
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : 'https://lostreturn.me')
+    ).replace(/\/+$/, '');
 
     // Unified Email Metadata
-    const senderFrom = `"LostReturn" <${process.env.SMTP_USER}>`;
+    const senderFrom = process.env.SMTP_FROM || `"LostReturn" <noreply@lostreturn.me>`;
     const emailSubject = 'มีข้อความใหม่ถึงคุณ';
 
-    // Prepare transporter with env configurations
+    // Prepare transporter with env configurations (Supports Resend SMTP / Port 465 SSL)
+    const smtpPort = Number(process.env.SMTP_PORT) || 465;
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: Number(process.env.SMTP_PORT) || 465,
-      secure: Number(process.env.SMTP_PORT) === 465,
+      host: process.env.SMTP_HOST || 'smtp.resend.com',
+      port: smtpPort,
+      secure: smtpPort === 465,
       auth: {
-        user: process.env.SMTP_USER,
+        user: process.env.SMTP_USER || 'resend',
         pass: process.env.SMTP_PASS,
       },
     });
@@ -210,8 +215,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ skipped: true, reason: 'Sender and receiver are the same email' });
       }
 
-      // Construct Unified Chat Link
-      const chatLink = `${appUrl}/?view=chat&roomId=${roomId}`;
+      // Construct Unified Chat Link (Root Domain)
+      const chatLink = baseUrl;
       const emailHtml = generateMinimalEmailHtml(chatLink);
 
       await transporter.sendMail({
@@ -236,7 +241,7 @@ export async function POST(req: Request) {
     if (isStudentSender) {
       const studentUserId = senderUserId;
       const adminUserId = body.user_id || body.userId;
-      chatLink = `${appUrl}/admin`;
+      chatLink = baseUrl;
 
       // 1. 25-SECOND DEBOUNCE DELAY
       await delay(25000);
@@ -323,14 +328,14 @@ export async function POST(req: Request) {
       ]);
 
       senderEmail = studentUserRes.data?.user?.email || authData.user.email;
-      receiverEmail = adminUserRes?.data?.user?.email || process.env.ADMIN_EMAIL || process.env.SMTP_USER;
+      receiverEmail = adminUserRes?.data?.user?.email || process.env.ADMIN_EMAIL || 'admin@lostreturn.me';
     } else {
       const studentUserId = body.user_id || body.userId;
       if (!studentUserId) {
         return NextResponse.json({ error: 'Missing user_id for recipient' }, { status: 400 });
       }
 
-      chatLink = `${appUrl}/contact-admin`;
+      chatLink = baseUrl;
 
       // 1. 25-SECOND DEBOUNCE DELAY
       await delay(25000);
@@ -395,7 +400,7 @@ export async function POST(req: Request) {
         supabaseAdmin.auth.admin.getUserById(studentUserId),
       ]);
 
-      senderEmail = adminUserRes.data?.user?.email || authData.user.email || process.env.ADMIN_EMAIL || process.env.SMTP_USER;
+      senderEmail = adminUserRes.data?.user?.email || authData.user.email || process.env.ADMIN_EMAIL || 'admin@lostreturn.me';
       receiverEmail = studentUserRes.data?.user?.email;
     }
 
@@ -417,8 +422,8 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ success: true, message: 'Notification email sent' });
-  } catch (error: any) {
-    console.error('[send-chat-notification] Unexpected error sending email');
+  } catch (error: unknown) {
+    console.error('[send-chat-notification] Unexpected error sending email:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
