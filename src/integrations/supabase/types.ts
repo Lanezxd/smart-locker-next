@@ -260,6 +260,9 @@ export type Database = {
           security_question: string | null
           status: string
           user_id: string | null
+          locked_by: string | null
+          locked_until: string | null
+          lock_reason: string | null
         }
         Insert: {
           collected_at?: string | null
@@ -280,6 +283,9 @@ export type Database = {
           security_question?: string | null
           status?: string
           user_id?: string | null
+          locked_by?: string | null
+          locked_until?: string | null
+          lock_reason?: string | null
         }
         Update: {
           collected_at?: string | null
@@ -300,6 +306,9 @@ export type Database = {
           security_question?: string | null
           status?: string
           user_id?: string | null
+          locked_by?: string | null
+          locked_until?: string | null
+          lock_reason?: string | null
         }
         Relationships: []
       }

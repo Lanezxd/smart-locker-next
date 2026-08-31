@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { EditPostModal } from '@/components/feed/EditPostModal';
+import { formatThaiDate } from '@/lib/formatters';
 
 interface Post {
   id: string;
@@ -103,7 +104,7 @@ const MyPostsPage = () => {
                         {post.content || post.title}
                       </p>
                       <p className="text-[10px] text-zinc-400 mt-2 font-normal">
-                        {new Date(post.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {formatThaiDate(post.created_at)}
                       </p>
                     </div>
                   </div>

@@ -11,7 +11,6 @@ import { Locker, ChatMessage, VerificationResult } from "@/types/locker";
 import { generateOTP } from "@/lib/locker-data";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useLockerTransactions } from "@/hooks/useLockerTransactions";
 import { useAuth } from "@/hooks/useAuth";
 import { copyToClipboard } from "@/lib/clipboard";
 
@@ -40,7 +39,6 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [copied, setCopied] = useState(false);
-  const { markAsCollected } = useLockerTransactions();
 
   // Timer useEffect for Collect OTP timeout
   useEffect(() => {
@@ -75,37 +73,6 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const publishOTP = async (otpValue: string) => {
-    try {
-      const mqttModule = await import('mqtt');
-      const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
-      if (connectFn && locker) {
-        const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
-        if (brokerUrl) {
-          const client = connectFn(brokerUrl, {
-            clientId: `lostreturn-otp-pub-${Math.random().toString(16).slice(2, 8)}`,
-            connectTimeout: 8000,
-            username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
-            password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
-          });
-
-          client.on('connect', () => {
-            client.publish(`lostreturn/locker/${locker.id}/command`, JSON.stringify({ otp: otpValue }), { qos: 1 }, () => {
-              client.end(true);
-            });
-          });
-
-          client.on('error', (err) => {
-            console.error('[MQTT] OTP publish error:', err);
-            client.end(true);
-          });
-        }
-      }
-    } catch (mqttErr) {
-      console.error('[MQTT] Failed to publish OTP:', mqttErr);
-    }
-  };
-
   const handleSecuritySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -135,31 +102,36 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
     setError('');
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        toast.error('กรุณาเข้าสู่ระบบก่อนยืนยันตัวตน');
+        setStep('security');
+        setError('กรุณาเข้าสู่ระบบก่อนทำรายการ');
+        return;
+      }
+
       const response = await fetch('/api/verify-answer', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           userAnswer: userAnswer.trim(),
-          correctAnswer: locker.securityQuestion.answer,
-          question: locker.securityQuestion.question
+          transactionId: transactionId || undefined,
+          lockerId: locker.id
         })
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to verify answer');
-      }
 
       const data = await response.json();
       setVerificationResult(data);
 
-      if (data.isMatch) {
-        // Answer is correct - generate OTP
-        const newOTP = generateOTP();
-        publishOTP(newOTP);
-        setGeneratedOTP(newOTP);
-        setOtpGeneratedAt(new Date());
+      if (response.ok && data.isMatch && data.otp) {
+        // Answer is correct - receive server-generated OTP
+        setGeneratedOTP(data.otp);
+        setOtpGeneratedAt(data.otpGeneratedAt ? new Date(data.otpGeneratedAt) : new Date());
         setStep('otp');
         toast.success('ยืนยันตัวตนสำเร็จ!');
       } else {
@@ -180,8 +152,9 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
           // Still have attempts left - go back to security
           setStep('security');
           setUserAnswer('');
-          setError(`คำตอบไม่ถูกต้อง (เหลือ ${MAX_ATTEMPTS - newAttempts} ครั้ง)`);
-          toast.error(`คำตอบไม่ถูกต้อง เหลืออีก ${MAX_ATTEMPTS - newAttempts} ครั้ง`);
+          const reasonMsg = data?.reason || `คำตอบไม่ถูกต้อง (เหลือ ${MAX_ATTEMPTS - newAttempts} ครั้ง)`;
+          setError(reasonMsg);
+          toast.error(reasonMsg);
         }
       }
     } catch (err) {
@@ -215,76 +188,54 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
       }
     }
 
-    if (otp === generatedOTP) {
-      setError('');
-      setStep('verifying');
+    setError('');
+    setStep('verifying');
 
-      try {
-        if (transactionId) {
-          const collectorUserId = user?.id || null;
-          const collectorName = profile?.username || profile?.full_name || (user?.email ? user.email.split('@')[0] : null);
-          const collectorContact = profile?.phone || user?.email || null;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-          // 1. Update Supabase with matched OTP, timestamp, status, collected_at, and collector identity
-          const { error: updateError } = await supabase
-            .from('locker_transactions')
-            .update({
-              otp: otp,
-              otp_generated_at: otpGeneratedAt?.toISOString() || new Date().toISOString(),
-              status: 'collected',
-              collected_at: new Date().toISOString(),
-              collector_user_id: collectorUserId,
-              collector_name: collectorName,
-              collector_contact: collectorContact
-            })
-            .eq('id', transactionId);
-
-          if (updateError) {
-            console.error('Error updating OTP in Supabase:', updateError);
-          }
-
-          // Update transaction status to collected
-          await markAsCollected(transactionId);
-        }
-
-        // 2. Publish MQTT OPEN command
-        try {
-          const mqttModule = await import('mqtt');
-          const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
-          if (connectFn && locker) {
-            const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
-            if (brokerUrl) {
-              const client = connectFn(brokerUrl, {
-                clientId: `lostreturn-collect-${Math.random().toString(16).slice(2, 8)}`,
-                connectTimeout: 8000,
-                username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
-                password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
-              });
-
-              client.on('connect', () => {
-                client.publish(`lostreturn/locker/${locker.id}/command`, 'OPEN', { qos: 1 }, () => {
-                  client.end(true);
-                });
-              });
-
-              client.on('error', (err) => {
-                console.error('[MQTT] Collect error:', err);
-                client.end(true);
-              });
-            }
-          }
-        } catch (mqttErr) {
-          console.error('[MQTT] Failed to publish OPEN command:', mqttErr);
-        }
-
-        setStep('success');
-      } catch (err) {
-        console.error('Error completing collection:', err);
-        setError('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+      if (!token) {
+        toast.error('กรุณาเข้าสู่ระบบ');
         setStep('otp');
+        return;
       }
-    } else {
-      setError('รหัส OTP ไม่ถูกต้อง');
+
+      const collectorName = profile?.username || profile?.full_name || (user?.email ? user.email.split('@')[0] : null);
+      const collectorContact = profile?.phone || user?.email || null;
+
+      // Call secure server-side locker unlock API
+      const response = await fetch('/api/locker/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          lockerId: locker?.id,
+          transactionId: transactionId || undefined,
+          otp: otp.trim(),
+          collectorName,
+          collectorContact,
+          action: 'collect'
+        })
+      });
+
+      const unlockResult = await response.json();
+
+      if (!response.ok || !unlockResult.success) {
+        setError(unlockResult.error || 'รหัส OTP ไม่ถูกต้อง หรือตู้ไม่พร้อมใช้งาน');
+        toast.error(unlockResult.error || 'ไม่สามารถเปิดตู้ได้');
+        setStep('otp');
+        return;
+      }
+
+      setStep('success');
+      toast.success('ตู้ล็อกเกอร์กำลังปลดล็อก...');
+    } catch (err) {
+      console.error('Error completing collection:', err);
+      setError('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+      setStep('otp');
     }
   };
 
@@ -317,7 +268,6 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
   const handleDepositorApprove = () => {
     // Simulate depositor approving and sending OTP
     const newOTP = generateOTP();
-    publishOTP(newOTP);
     setGeneratedOTP(newOTP);
     setOtpGeneratedAt(new Date());
     setStep('otp');
@@ -547,8 +497,8 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
                             <div
                               className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed ${
                                 msg.sender === 'claimer'
-                                  ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 font-medium'
-                                  : 'bg-white border border-zinc-200 text-zinc-800 font-normal shadow-sm'
+                                   ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 font-medium'
+                                   : 'bg-white border border-zinc-200 text-zinc-800 font-normal shadow-sm'
                               }`}
                             >
                               {msg.message}

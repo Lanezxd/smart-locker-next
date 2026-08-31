@@ -86,9 +86,4 @@ export function getLockerStatusText(status: Locker['status']): string {
   }
 }
 
-export function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat('th-TH', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
+export { formatDate } from './formatters';

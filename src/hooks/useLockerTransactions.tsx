@@ -23,6 +23,9 @@ export interface LockerTransaction {
   status: string;
   created_at: string;
   image_url: string | null;
+  locked_by?: string | null;
+  locked_until?: string | null;
+  lock_reason?: string | null;
 }
 
 export const useLockerTransactions = () => {

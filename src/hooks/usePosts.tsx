@@ -33,7 +33,7 @@ export const usePosts = () => {
 
   const fetchPosts = useCallback(async (isSilent = false) => {
     if (!isSilent) {
-      setLoading(prev => posts.length === 0 ? true : prev);
+      setLoading(true);
     }
     setError(null);
     const { data: postsData, error: postsError } = await supabase
@@ -41,24 +41,26 @@ export const usePosts = () => {
       .select('*')
       .eq('status', 'active')
       .order('created_at', { ascending: false });
-    if (postsError) {
+
+    if (postsError || !postsData) {
       setError('ไม่สามารถโหลดโพสต์ได้');
       setLoading(false);
       return;
     }
-    const userIds = [...new Set((postsData || []).map(p => p.user_id))];
+
+    const userIds = [...new Set(postsData.map(p => p.user_id))];
     if (userIds.length > 0) {
       const { data: profilesData } = await supabase
         .from('profiles')
         .select('user_id, username, full_name, avatar_url')
         .in('user_id', userIds);
       const profilesMap = new Map((profilesData || []).map(p => [p.user_id, p]));
-      setPosts((postsData || []).map(post => ({ ...post, profiles: profilesMap.get(post.user_id) || null })) as Post[]);
+      setPosts(postsData.map(post => ({ ...post, profiles: profilesMap.get(post.user_id) || null } as Post)));
     } else {
-      setPosts((postsData || []) as Post[]);
+      setPosts(postsData as Post[]);
     }
     setLoading(false);
-  }, [posts.length]);
+  }, []);
 
   useEffect(() => { fetchPosts(); }, [fetchPosts]);
 

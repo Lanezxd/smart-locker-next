@@ -78,7 +78,7 @@ const DepositModePage = () => {
         }
       }
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const { error } = await supabase.from('locker_transactions').insert({
+      const { data: insertedTx, error } = await supabase.from('locker_transactions').insert({
         locker_id: selectedLocker.id,
         item_description: itemDescription.trim(),
         depositor_name: profile?.username || profile?.full_name || user?.email?.split('@')[0] || 'ไม่ระบุ',
@@ -89,15 +89,33 @@ const DepositModePage = () => {
         image_url: imageUrl,
         status: 'deposited',
         user_id: user?.id || null
-      });
+      }).select('id').single();
       if (error) throw error;
+
+      // Unlock locker for deposit via server API
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (token) {
+        fetch('/api/locker/unlock', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            lockerId: selectedLocker.id,
+            transactionId: insertedTx?.id,
+            action: 'deposit'
+          })
+        }).catch(console.error);
+      }
+
       toast.success(
         <div className="space-y-2">
-          <p className="font-semibold">ฝากของสำเร็จ!</p>
+          <p className="font-semibold">ฝากของสำเร็จ! ตู้กำลังเปิด...</p>
           <p className="text-sm">ตู้หมายเลข #{String(selectedLocker.id).padStart(2, '0')}</p>
-          <p className="text-lg font-bold">รหัส OTP: {otp}</p>
         </div>,
-        { duration: 10000 }
+        { duration: 5000 }
       );
       fetchTransactions();
       resetForm();

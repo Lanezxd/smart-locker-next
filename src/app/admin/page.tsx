@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdmin } from '@/hooks/useAdmin';
 import { toast } from 'sonner';
+import { formatThaiDate } from '@/lib/formatters';
 
 type TabType = 'lockers' | 'reports' | 'chats';
 
@@ -148,61 +149,39 @@ const AdminDashboardPage = () => {
         })
         .eq('id', transactionId);
 
-      if (dbError) {
-        toast.error('ไม่สามารถปลดล็อกตู้ได้');
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        toast.error('กรุณาเข้าสู่ระบบก่อนดำเนินการ');
         setActionLoading(null);
         return;
       }
 
-      const mqttModule = await import('mqtt');
-      const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
-      if (!connectFn) {
-        throw new Error('MQTT connection function not found');
-      }
-
-      const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
-      if (!brokerUrl) {
-        throw new Error('MQTT broker URL is not set');
-      }
-
-      const client = connectFn(brokerUrl, {
-        clientId: `lostreturn-admin-${Math.random().toString(16).slice(2, 8)}`,
-        connectTimeout: 8000,
-        username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
-        password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
+      const response = await fetch('/api/locker/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          lockerId,
+          transactionId,
+          action: 'admin',
+          collectorName: adminName,
+          collectorContact: adminContact
+        })
       });
 
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          client.end(true);
-          reject(new Error('MQTT connection timeout'));
-        }, 5000);
-
-        client.on('connect', () => {
-          clearTimeout(timeout);
-          const topic = `lostreturn/locker/${lockerId}/command`;
-          const payload = 'OPEN';
-          client.publish(topic, payload, { qos: 1 }, (err) => {
-            client.end(true);
-            if (err) {
-              reject(err);
-            } else {
-              resolve();
-            }
-          });
-        });
-
-        client.on('error', (err) => {
-          clearTimeout(timeout);
-          client.end(true);
-          reject(err);
-        });
-      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Failed to unlock locker');
+      }
 
       toast.success('ปลดล็อกตู้และส่งคำสั่งเปิดตู้สำเร็จ!');
-    } catch (mqttError) {
-      console.error('MQTT direct unlock error:', mqttError);
-      toast.warning('ปลดล็อกตู้สำเร็จในระบบ แต่เกิดข้อผิดพลาดในการส่งคำสั่งเปิดตู้ผ่าน MQTT');
+    } catch (err: unknown) {
+      console.error('Admin unlock error:', err);
+      toast.error((err as Error)?.message || 'เกิดข้อผิดพลาดในการปลดล็อกตู้');
     } finally {
       fetchTransactions();
       setActionLoading(null);
@@ -313,7 +292,7 @@ const AdminDashboardPage = () => {
                       </div>
                       <p className="text-sm text-zinc-800 font-medium">{tx.item_description}</p>
                       <p className="text-xs text-zinc-600 mt-1 font-normal">ผู้ฝาก: {tx.depositor_name}</p>
-                      <p className="text-xs text-zinc-400 font-normal">ฝากเมื่อ: {new Date(tx.deposited_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                      <p className="text-xs text-zinc-400 font-normal">ฝากเมื่อ: {formatThaiDate(tx.deposited_at)}</p>
                     </div>
                     {tx.image_url && <img src={tx.image_url} alt="" className="w-16 h-16 rounded-xl object-cover ml-3 border border-zinc-200" />}
                   </div>
@@ -345,7 +324,7 @@ const AdminDashboardPage = () => {
                         {report.status === 'pending' ? 'รอดำเนินการ' : report.status === 'dismissed' ? 'ปิดแล้ว' : report.status}
                       </span>
                       <p className="text-sm text-zinc-800 font-medium mt-2">เหตุผล: {report.reason}</p>
-                      <p className="text-xs text-zinc-400 mt-1 font-normal">{new Date(report.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                      <p className="text-xs text-zinc-400 mt-1 font-normal">{formatThaiDate(report.created_at)}</p>
                     </div>
                   </div>
                   {report.post && (

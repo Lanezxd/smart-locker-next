@@ -47,10 +47,13 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdmin } from '@/hooks/useAdmin';
-import { useLockerTransactions } from '@/hooks/useLockerTransactions';
+import { useLockerTransactions, LockerTransaction } from '@/hooks/useLockerTransactions';
 import { ChatRoom, ChatMessageDB } from '@/hooks/useChat';
 import { useChatContext } from '@/contexts/ChatContext';
 import { copyToClipboard } from '@/lib/clipboard';
+import { formatTime, formatThaiDate } from '@/lib/formatters';
+import { LockerStatusBadge } from '@/components/locker/LockerStatusBadge';
+import { LockerCountdownTimer } from '@/components/locker/LockerCountdownTimer';
 
 // Types
 interface LockerItem {
@@ -63,6 +66,10 @@ interface LockerItem {
   answer: string;
   otp?: number;
   transactionId?: string;
+  lockedBy?: string | null;
+  lockedUntil?: string | null;
+  lockReason?: string | null;
+  isLockedByOther?: boolean;
 }
 
 interface Locker {
@@ -1208,7 +1215,6 @@ const DashboardView = ({
   currentUserId,
   onLoginRequired,
   markAsCollected,
-  mqttPublish,
   otpGeneratedAt,
   otpTimeLeft,
   setOtp,
@@ -1226,7 +1232,6 @@ const DashboardView = ({
   currentUserId?: string;
   onLoginRequired: () => void;
   markAsCollected: (transactionId: string) => Promise<boolean>;
-  mqttPublish?: (topic: string, payload: string) => void;
   otpGeneratedAt: Date | null;
   otpTimeLeft: number;
   setOtp: (otp: number) => void;
@@ -1238,12 +1243,6 @@ const DashboardView = ({
   const [unlocking, setUnlocking] = useState<number | null>(null);
   const [errors, setErrors] = useState<{ [lockerId: number]: string }>({});
   const [viewingImage, setViewingImage] = useState<{ src: string; name: string } | null>(null);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
 
   const handleOtpChange = (lockerId: number, value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 6);
@@ -1258,86 +1257,45 @@ const DashboardView = ({
       return;
     }
 
-    if (otpGeneratedAt) {
-      const elapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
-      if (elapsed >= 600) {
-        setErrors({ ...errors, [locker.id]: 'รหัส OTP หมดอายุแล้ว' });
-        return;
-      }
-    }
-
     setUnlocking(locker.id);
 
-    // Simulate unlock delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-    // Check OTP against local state first, then verify against database as fallback
-    let otpMatch = locker.item?.otp && enteredOtp === String(locker.item.otp);
-    let transactionId = locker.item?.transactionId;
-
-    if (!otpMatch && transactionId) {
-      const { data: txn } = await supabase
-        .from('locker_transactions')
-        .select('otp')
-        .eq('id', transactionId)
-        .single();
-      
-      if (txn?.otp && enteredOtp === txn.otp) {
-        otpMatch = true;
-      }
-    }
-
-    if (!otpMatch && !transactionId) {
-      const { data: txn } = await supabase
-        .from('locker_transactions')
-        .select('id, otp')
-        .eq('locker_id', locker.id)
-        .eq('status', 'deposited')
-        .maybeSingle();
-      
-      if (txn?.otp && enteredOtp === txn.otp) {
-        otpMatch = true;
-        transactionId = txn.id;
-      }
-    }
-
-    if (otpMatch) {
-      if (!transactionId) {
-        toast.error('ไม่พบรหัสรายการของตู้ กรุณารีเฟรชแล้วลองใหม่');
+      if (!token) {
+        toast.error('กรุณาเข้าสู่ระบบก่อนปลดล็อกตู้');
         setUnlocking(null);
         return;
       }
 
-      const collectorUserId = currentUserId || currentUser?.id || null;
       const collectorName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : null);
       const collectorContact = currentUser?.phone || currentUser?.email || null;
 
-      const { error: updateError } = await supabase
-        .from('locker_transactions')
-        .update({
+      const response = await fetch('/api/locker/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          lockerId: locker.id,
+          transactionId: locker.item?.transactionId,
           otp: enteredOtp,
-          otp_generated_at: otpGeneratedAt ? otpGeneratedAt.toISOString() : new Date().toISOString(),
-          status: 'collected',
-          collected_at: new Date().toISOString(),
-          collector_user_id: collectorUserId,
-          collector_name: collectorName,
-          collector_contact: collectorContact
+          collectorName,
+          collectorContact,
+          action: 'collect'
         })
-        .eq('id', transactionId);
+      });
 
-      if (updateError) {
-        console.error('Error updating OTP in Supabase:', updateError);
-      }
+      const result = await response.json();
 
-      const ok = await markAsCollected(transactionId);
-      if (!ok) {
+      if (!response.ok || !result.success) {
+        const errMsg = result.error || 'รหัส OTP ไม่ถูกต้อง หรือตู้ไม่พร้อมใช้งาน';
+        setErrors({ ...errors, [locker.id]: errMsg });
+        toast.error(errMsg);
         setUnlocking(null);
         return;
-      }
-
-      const lockerIdNum = Number(locker.id);
-      if (!isNaN(lockerIdNum)) {
-        mqttPublish?.(`lostreturn/locker/${lockerIdNum}/command`, 'OPEN');
       }
 
       setLockers(lockers.map(l => 
@@ -1359,10 +1317,54 @@ const DashboardView = ({
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
-    } else {
-      setErrors({ ...errors, [locker.id]: 'รหัส OTP ไม่ถูกต้อง' });
+    } catch (err) {
+      console.error('Error unlocking locker:', err);
+      toast.error('เกิดข้อผิดพลาดในการปลดล็อกตู้');
+    } finally {
+      setUnlocking(null);
     }
-    setUnlocking(null);
+  };
+
+  const handleStartVerify = async (locker: Locker) => {
+    if (locker.item?.isLockedByOther) {
+      return;
+    }
+    if (!currentUser) {
+      toast.error('กรุณาเข้าสู่ระบบก่อนทำรายการ');
+      onLoginRequired();
+      return;
+    }
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        toast.error('กรุณาเข้าสู่ระบบก่อนทำรายการ');
+        onLoginRequired();
+        return;
+      }
+      const res = await fetch('/api/locker/acquire-lock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          lockerId: locker.id,
+          transactionId: locker.item?.transactionId,
+          reason: 'verifying'
+        })
+      });
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        toast.error(resData.error || 'ตู้กำลังถูกตรวจสอบโดยผู้ใช้อื่น');
+        return;
+      }
+      setSelectedLocker(locker);
+      setView('verify');
+    } catch (err) {
+      console.error('Error acquiring lock:', err);
+      toast.error('เกิดข้อผิดพลาดในการตรวจสอบตู้');
+    }
   };
 
   return (
@@ -1415,7 +1417,9 @@ const DashboardView = ({
               locker.status === 'available' && userRole === 'finder'
                 ? 'bg-white border border-zinc-200 hover:border-emerald-400 hover:shadow-[0_8px_30px_rgba(16,185,129,0.12)] shadow-sm group cursor-pointer'
                 : locker.status === 'occupied'
-                ? 'bg-white border border-amber-300/80 hover:border-amber-400 shadow-[0_4px_20px_rgba(245,158,11,0.08)]'
+                ? locker.item?.isLockedByOther
+                  ? 'bg-white border border-zinc-200/80 shadow-sm opacity-90'
+                  : 'bg-white border border-amber-300/80 hover:border-amber-400 shadow-[0_4px_20px_rgba(245,158,11,0.08)] cursor-pointer'
                 : locker.status === 'available'
                 ? 'bg-white border border-zinc-200 shadow-sm'
                 : 'bg-zinc-100 border border-zinc-200 cursor-not-allowed opacity-50'
@@ -1429,15 +1433,13 @@ const DashboardView = ({
                 }
                 setSelectedLocker(locker);
                 setView('deposit');
+                return;
               }
               if (locker.status === 'occupied' && userRole === 'receiver' && !locker.item?.otp) {
-                if (!currentUser) {
-                  toast.error('กรุณาเข้าสู่ระบบก่อนทำรายการ');
-                  onLoginRequired();
+                if (locker.item?.isLockedByOther) {
                   return;
                 }
-                setSelectedLocker(locker);
-                setView('verify');
+                handleStartVerify(locker);
               }
             }}
           >
@@ -1579,22 +1581,26 @@ const DashboardView = ({
 
                   {/* Click to verify - Only show if no OTP */}
                   {!locker.item.otp && userRole === 'receiver' && (
-                    <button 
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!currentUser) {
-                          toast.error('กรุณาเข้าสู่ระบบก่อนทำรายการ');
-                          onLoginRequired();
-                          return;
-                        }
-                        setSelectedLocker(locker);
-                        setView('verify');
-                      }}
-                      className="w-full mt-auto bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 rounded-xl py-2 px-3 text-xs font-semibold shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-400/35 hover:scale-[1.02] hover:brightness-105 active:scale-[0.97] active:brightness-95 transition-all duration-200 flex items-center justify-center cursor-pointer select-none"
-                    >
-                      <span>Verify</span>
-                    </button>
+                    locker.item.isLockedByOther ? (
+                      <button 
+                        type="button"
+                        disabled
+                        className="w-full mt-auto bg-zinc-200 text-zinc-500 rounded-xl py-2 px-3 text-xs font-semibold cursor-not-allowed border border-zinc-300 shadow-none select-none transition-all"
+                      >
+                        <span>Verifying Identity</span>
+                      </button>
+                    ) : (
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStartVerify(locker);
+                        }}
+                        className="w-full mt-auto bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 rounded-xl py-2 px-3 text-xs font-semibold shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-400/35 hover:scale-[1.02] hover:brightness-105 active:scale-[0.97] active:brightness-95 transition-all duration-200 flex items-center justify-center cursor-pointer select-none"
+                      >
+                        <span>Verify</span>
+                      </button>
+                    )
                   )}
                 </div>
               )}
@@ -1822,27 +1828,19 @@ const DepositView = ({
   );
 };
 
-// Helper to format full Thai deposit date and time (e.g. 16 ส.ค. 2569 เวลา 18:28 น.)
+// Helper to format full Thai deposit date and time using centralized formatter
 const formatThaiDepositDateTime = (item?: LockerItem | null) => {
   if (!item) return '';
   if (item.depositedAt) {
-    const d = new Date(item.depositedAt);
-    if (!isNaN(d.getTime())) {
-      return `${d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา ${d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`;
-    }
+    return formatThaiDate(item.depositedAt);
   }
   if (item.date && item.date !== 'ตอนนี้') {
-    if (item.date.includes('เวลา') || item.date.includes('ม.ค.') || item.date.includes('ก.พ.') || item.date.includes('มี.ค.') || item.date.includes('เม.ย.') || item.date.includes('พ.ค.') || item.date.includes('มิ.ย.') || item.date.includes('ก.ค.') || item.date.includes('ส.ค.') || item.date.includes('ก.ย.') || item.date.includes('ต.ค.') || item.date.includes('พ.ย.') || item.date.includes('ธ.ค.')) {
+    if (item.date.includes('เวลา')) {
       return item.date;
     }
-    const d = new Date(item.date);
-    if (!isNaN(d.getTime())) {
-      return `${d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา ${d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`;
-    }
-    return item.date;
+    return formatThaiDate(item.date) || item.date;
   }
-  const now = new Date();
-  return `${now.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา ${now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`;
+  return formatThaiDate(new Date());
 };
 
 // Verify View Component (Luxury Light Mode)
@@ -1857,6 +1855,7 @@ const VerifyView = ({
   onStartChat,
   attempts,
   maxAttempts,
+  currentUserId,
 }: {
   setView: (view: ViewType) => void;
   selectedLocker: Locker | null;
@@ -1868,10 +1867,68 @@ const VerifyView = ({
   onStartChat: () => void;
   attempts: number;
   maxAttempts: number;
+  currentUserId?: string;
 }) => {
   const remaining = Math.max(0, maxAttempts - attempts);
   const isInputValid = verifyAnswer.trim().length > 0;
   const isButtonDisabled = aiThinking || !isInputValid || attempts >= maxAttempts;
+
+  // Release lock on browser unload or tab close
+  useEffect(() => {
+    const transactionId = selectedLocker?.item?.transactionId;
+    const lockerId = selectedLocker?.id;
+
+    const handleUnload = () => {
+      if (transactionId || lockerId) {
+        let token = '';
+        try {
+          const storageKey = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+          if (storageKey) {
+            const parsed = JSON.parse(localStorage.getItem(storageKey) || '{}');
+            token = parsed?.access_token || '';
+          }
+        } catch {}
+
+        const payload = JSON.stringify({ transactionId, lockerId });
+        fetch('/api/locker/release-lock', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: payload,
+          keepalive: true
+        }).catch(() => {});
+      }
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [selectedLocker?.item?.transactionId, selectedLocker?.id]);
+
+  const handleBackToDashboard = async () => {
+    const transactionId = selectedLocker?.item?.transactionId;
+    const lockerId = selectedLocker?.id;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (token && (transactionId || lockerId)) {
+        fetch('/api/locker/release-lock', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ transactionId, lockerId }),
+          keepalive: true
+        }).catch(() => {});
+      }
+    } catch {}
+    setView('dashboard');
+  };
 
   const handleInputBlur = () => {
     setTimeout(() => {
@@ -1886,7 +1943,7 @@ const VerifyView = ({
   return (
     <div className="max-w-2xl mx-auto px-3.5 sm:px-4 py-4 sm:py-6 min-h-[calc(100dvh-80px)] sm:min-h-0 flex flex-col justify-center animate-fade-in">
       <button
-        onClick={() => setView('dashboard')}
+        onClick={handleBackToDashboard}
         className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer w-fit"
       >
         <ChevronLeft className="w-4 h-4" />
@@ -1999,7 +2056,6 @@ const ChatView = ({
   currentUserId,
   isDepositor,
   setOtpGeneratedAt,
-  mqttPublish,
   markRoomAsRead,
   setUserRole,
 }: {
@@ -2015,7 +2071,6 @@ const ChatView = ({
   isDepositor: boolean;
   clearActiveRoom: () => void;
   setOtpGeneratedAt: (date: Date | null) => void;
-  mqttPublish?: (topic: string, payload: string) => void;
   markRoomAsRead?: (roomId: string) => Promise<void>;
   setUserRole?: (role: 'finder' | 'receiver') => void;
 }) => {
@@ -2026,12 +2081,6 @@ const ChatView = ({
   const [sendingOtp, setSendingOtp] = useState(false);
   const [otpCooldown, setOtpCooldown] = useState<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -2084,7 +2133,8 @@ const ChatView = ({
 
   // Depositor sends OTP via chat (with 10-minute cooldown)
   const handleSendOtp = async () => {
-    if (!chatRoom || !selectedLocker?.item?.transactionId) return;
+    const transactionId = selectedLocker?.item?.transactionId;
+    if (!chatRoom || !transactionId) return;
     if (otpCooldown > 0) {
       toast.error(`กรุณารอ ${formatTime(otpCooldown)} ก่อนส่ง OTP อีกครั้ง`);
       return;
@@ -2092,29 +2142,42 @@ const ChatView = ({
     setSendingOtp(true);
 
     try {
-      const generatedOtp = Math.floor(100000 + Math.random() * 900000);
-      const otpToSend = String(generatedOtp);
-      const generatedAt = new Date();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-      const lockerId = chatRoom?.locker_id || selectedLocker?.id;
-      if (lockerId) {
-        mqttPublish?.(`lostreturn/locker/${lockerId}/command`, JSON.stringify({ otp: otpToSend }));
+      if (!token) {
+        toast.error('กรุณาเข้าสู่ระบบก่อนส่ง OTP');
+        setSendingOtp(false);
+        return;
       }
 
-      await supabase
-        .from('locker_transactions')
-        .update({
-          otp: otpToSend,
-          otp_generated_at: generatedAt.toISOString()
+      const response = await fetch('/api/locker/send-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          transactionId,
+          lockerId: selectedLocker?.id || chatRoom?.locker_id
         })
-        .eq('id', selectedLocker.item.transactionId);
+      });
 
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        toast.error(result.error || 'ไม่สามารถสร้างรหัส OTP ได้');
+        setSendingOtp(false);
+        return;
+      }
+
+      const otpToSend = String(result.otp);
       await sendMessage(chatRoom.id, `รหัส OTP สำหรับเปิดตู้: ${otpToSend}`, 'otp_sent');
       setOtpCooldown(600);
-      toast.success('ส่งรหัส OTP ให้ผู้รับแล้ว!');
+      toast.success('ส่งรหัส OTP ให้ผู้รับและส่งคำสั่งไปยังตู้สำเร็จ!');
     } catch (err) {
       console.error('Error sending OTP:', err);
-      toast.error('เกิดข้อผิดพลาด');
+      toast.error('เกิดข้อผิดพลาดในการส่งรหัส OTP');
     } finally {
       setSendingOtp(false);
     }
@@ -2345,12 +2408,6 @@ const OtpDisplayView = ({
   const otpString = String(otp).padStart(6, '0');
   const [copied, setCopied] = useState(false);
   
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
-  
   const handleCopyOtp = async () => {
     const ok = await copyToClipboard(otpString);
     if (ok) {
@@ -2457,7 +2514,6 @@ const OtpView = ({
   markAsCollected,
   otpTimeLeft,
   otpGeneratedAt,
-  mqttPublish,
   currentUser,
   currentUserId,
 }: {
@@ -2470,7 +2526,6 @@ const OtpView = ({
   markAsCollected: (transactionId: string) => Promise<boolean>;
   otpTimeLeft: number;
   otpGeneratedAt: Date | null;
-  mqttPublish?: (topic: string, payload: string) => void;
   currentUser: UserData | null;
   currentUserId?: string;
 }) => {
@@ -2479,12 +2534,6 @@ const OtpView = ({
   const [error, setError] = useState('');
   const [unlocked, setUnlocked] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
 
   const handleInputChange = (index: number, value: string) => {
     const digits = value.replace(/\D/g, '');
@@ -2549,68 +2598,58 @@ const OtpView = ({
       return;
     }
 
-    if (otpGeneratedAt) {
-      const elapsed = Math.floor((new Date().getTime() - otpGeneratedAt.getTime()) / 1000);
-      if (elapsed >= 600) {
-        setError('รหัส OTP หมดอายุแล้ว');
+    setIsUnlocking(true);
+    setError('');
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        setError('กรุณาเข้าสู่ระบบก่อนปลดล็อกตู้');
+        toast.error('กรุณาเข้าสู่ระบบก่อนปลดล็อกตู้');
+        setIsUnlocking(false);
         return;
       }
-    }
 
-    setIsUnlocking(true);
-    
-    await new Promise(resolve => setTimeout(resolve, 1500));
+      const collectorName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : null);
+      const collectorContact = currentUser?.phone || currentUser?.email || null;
 
-    let otpMatch = enteredOtp === String(otp);
-    let transactionId = selectedLocker?.item?.transactionId;
+      const response = await fetch('/api/locker/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          lockerId: selectedLocker?.id,
+          transactionId: selectedLocker?.item?.transactionId,
+          otp: enteredOtp,
+          collectorName,
+          collectorContact,
+          action: 'collect'
+        })
+      });
 
-    if (!otpMatch && transactionId) {
-      const { data: txn } = await supabase
-        .from('locker_transactions')
-        .select('otp')
-        .eq('id', transactionId)
-        .single();
-      if (txn?.otp && enteredOtp === txn.otp) {
-        otpMatch = true;
-      }
-    }
+      const result = await response.json();
 
-    if (otpMatch) {
-      if (transactionId) {
-        const collectorUserId = currentUserId || currentUser?.id || null;
-        const collectorName = currentUser?.name || (currentUser?.email ? currentUser.email.split('@')[0] : null);
-        const collectorContact = currentUser?.phone || currentUser?.email || null;
-
-        const { error: updateError } = await supabase
-          .from('locker_transactions')
-          .update({
-            otp: enteredOtp,
-            otp_generated_at: otpGeneratedAt ? otpGeneratedAt.toISOString() : new Date().toISOString(),
-            status: 'collected',
-            collected_at: new Date().toISOString(),
-            collector_user_id: collectorUserId,
-            collector_name: collectorName,
-            collector_contact: collectorContact
-          })
-          .eq('id', transactionId);
-        if (updateError) console.error('Error updating OTP:', updateError);
-      }
-
-      if (selectedLocker) {
-        const lockerIdNum = Number(selectedLocker.id);
-        if (!isNaN(lockerIdNum)) {
-          mqttPublish?.(`lostreturn/locker/${lockerIdNum}/command`, 'OPEN');
-        }
+      if (!response.ok || !result.success) {
+        setError(result.error || 'รหัส OTP ไม่ถูกต้อง กรุณาลองใหม่');
+        toast.error(result.error || 'ไม่สามารถปลดล็อกตู้ได้');
+        setOtpInput(['', '', '', '', '', '']);
+        inputRefs.current[0]?.focus();
+        setIsUnlocking(false);
+        return;
       }
 
       setUnlocked(true);
-      toast.success('ปลดล็อกตู้สำเร็จ!');
-    } else {
-      setError('รหัส OTP ไม่ถูกต้อง กรุณาลองใหม่');
-      setOtpInput(['', '', '', '', '', '']);
-      inputRefs.current[0]?.focus();
+      toast.success('ปลดล็อกตู้สำเร็จ! ส่งคำสั่งเปิดตู้แล้ว');
+    } catch (err) {
+      console.error('Error unlocking locker:', err);
+      setError('เกิดข้อผิดพลาดในการปลดล็อกตู้');
+    } finally {
+      setIsUnlocking(false);
     }
-    setIsUnlocking(false);
   };
 
   const handleComplete = async () => {
@@ -3335,8 +3374,6 @@ function SmartLockerContent() {
     answer: ''
   });
 
-  const mqttRef = useRef<import('mqtt').MqttClient | null>(null);
-
   // Sync verifyAttempts when selectedLocker changes or on mount
   useEffect(() => {
     if (!selectedLocker) {
@@ -3397,11 +3434,11 @@ function SmartLockerContent() {
         .eq('status', 'deposited')
         .order('created_at', { ascending: false });
 
-      const latestByLocker: { [key: number]: any } = {};
+      const latestByLocker: Record<number, LockerTransaction> = {};
       if (transactions) {
         for (const t of transactions) {
           if (!latestByLocker[t.locker_id]) {
-            latestByLocker[t.locker_id] = t;
+            latestByLocker[t.locker_id] = t as LockerTransaction;
           }
         }
       }
@@ -3424,10 +3461,13 @@ function SmartLockerContent() {
             ? activeSession.otp
             : undefined;
 
-          const depDate = new Date(transaction.deposited_at);
-          const formattedThaiDate = !isNaN(depDate.getTime())
-            ? `${depDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา ${depDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`
-            : transaction.deposited_at;
+          const now = Date.now();
+          const isLockedByOther = Boolean(
+            transaction.locked_by &&
+            transaction.locked_by !== (user?.id || currentUser?.id) &&
+            transaction.locked_until &&
+            new Date(transaction.locked_until).getTime() > now
+          );
 
           const updatedLocker = {
             ...locker,
@@ -3435,13 +3475,17 @@ function SmartLockerContent() {
             item: {
               name: transaction.item_description,
               image: transaction.image_url || '',
-              date: formattedThaiDate,
+              date: formatThaiDate(transaction.deposited_at),
               depositedAt: transaction.deposited_at,
               finder: transaction.depositor_name,
               question: transaction.security_question || '',
               answer: transaction.security_answer || '',
               transactionId: transaction.id,
-              otp: activeOtp
+              otp: activeOtp,
+              lockedBy: transaction.locked_by,
+              lockedUntil: transaction.locked_until,
+              lockReason: transaction.lock_reason,
+              isLockedByOther
             }
           };
 
@@ -3480,116 +3524,6 @@ function SmartLockerContent() {
 
     return () => {
       supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const mqttPublish = useCallback((topic: string, payload: string) => {
-    if (mqttRef.current?.connected) {
-      mqttRef.current.publish(topic, payload, { qos: 1 });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const brokerUrl = process.env.NEXT_PUBLIC_MQTT_BROKER_URL;
-    if (!brokerUrl) {
-      console.warn('[MQTT] NEXT_PUBLIC_MQTT_BROKER_URL is not set — skipping connection.');
-      return;
-    }
-
-    let client: import('mqtt').MqttClient | null = null;
-    let isUnmounted = false;
-
-    import('mqtt').then((mqttModule) => {
-      if (isUnmounted) return;
-
-      const connectFn = mqttModule.connect || (mqttModule.default && mqttModule.default.connect);
-      if (!connectFn) {
-        console.error('[MQTT] Could not find connect function in module', mqttModule);
-        return;
-      }
-      client = connectFn(brokerUrl, {
-        clientId: `lostreturn-web-${Math.random().toString(16).slice(2, 8)}`,
-        reconnectPeriod: 3000,
-        connectTimeout: 8000,
-        username: process.env.NEXT_PUBLIC_MQTT_USERNAME || undefined,
-        password: process.env.NEXT_PUBLIC_MQTT_PASSWORD || undefined,
-      });
-
-      if (isUnmounted) {
-        client.end(true);
-        return;
-      }
-
-      mqttRef.current = client;
-
-      client.on('connect', () => {
-        if (isUnmounted || !client || !client.connected) return;
-        console.log('[MQTT] Connected to', brokerUrl);
-
-        client.subscribe('lostreturn/locker/+/status', { qos: 1 }, (err) => {
-          if (err) {
-            const errMsg = (err.message || String(err)).toLowerCase();
-            if (isUnmounted || !client || !client.connected || errMsg.includes('closed') || errMsg.includes('closing')) {
-              return;
-            }
-            console.error('[MQTT] Subscribe error:', err);
-          }
-        });
-      });
-
-      client.on('message', (topic, message) => {
-        if (isUnmounted) return;
-
-        const parts = topic.split('/');
-        const lockerId = Number(parts[2]);
-        const payload = message.toString().trim().toUpperCase();
-
-        if (!lockerId || isNaN(lockerId)) return;
-
-        console.log(`[MQTT] ${topic} → ${payload}`);
-
-        setLockers(prev => prev.map(l => {
-          if (l.id !== lockerId) return l;
-          if (payload === 'ITEM_DEPOSITED') {
-            if (l.status === 'available') {
-              return { ...l, status: 'occupied' as const };
-            }
-          } else if (payload === 'EMPTY') {
-            return { ...l, status: 'available' as const, item: null };
-          }
-          return l;
-        }));
-      });
-
-      client.on('error', (err: any) => {
-        if (isUnmounted) return;
-        const errMsg = (err?.message || String(err)).toLowerCase();
-        if (errMsg.includes('closed') || errMsg.includes('closing')) return;
-        console.error('[MQTT] Error:', err);
-      });
-
-      client.on('reconnect', () => {
-        if (isUnmounted) return;
-        console.log('[MQTT] Reconnecting...');
-      });
-    }).catch((err) => {
-      if (!isUnmounted) {
-        console.error('[MQTT] Import failed:', err);
-      }
-    });
-
-    return () => {
-      isUnmounted = true;
-      if (client) {
-        client.end(true);
-        client = null;
-      }
-      if (mqttRef.current) {
-        mqttRef.current.end(true);
-        mqttRef.current = null;
-      }
     };
   }, []);
 
@@ -3735,7 +3669,22 @@ function SmartLockerContent() {
         ));
         const lockerIdNum = Number(selectedLocker.id);
         if (!isNaN(lockerIdNum)) {
-          mqttPublish(`lostreturn/locker/${lockerIdNum}/command`, 'OPEN');
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (token) {
+            fetch('/api/locker/unlock', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                lockerId: lockerIdNum,
+                transactionId: result.id,
+                action: 'deposit'
+              })
+            }).catch(console.error);
+          }
         }
         toast.success('ฝากของสำเร็จ! ตู้จะเปิดอัตโนมัติ');
         setView('dashboard');
@@ -3763,20 +3712,32 @@ function SmartLockerContent() {
     setAiMessage(null);
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        toast.error('กรุณาเข้าสู่ระบบก่อนยืนยันตัวตน');
+        setAiMessage({ type: 'error', text: 'กรุณาเข้าสู่ระบบก่อนยืนยันตัวตน' });
+        setAiThinking(false);
+        return;
+      }
+
       const response = await fetch('/api/verify-answer', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           userAnswer: verifyAnswer.trim(),
-          correctAnswer: selectedLocker.item.answer,
-          question: selectedLocker.item.question
+          transactionId: selectedLocker.item.transactionId,
+          lockerId: selectedLocker.id
         })
       });
 
-      if (!response.ok) throw new Error('Failed to verify answer');
       const data = await response.json();
 
-      if (!data.isMatch && data.reason) {
+      if (!response.ok || (!data.isMatch && data.reason)) {
         setVerifyAnswer('');
         const newAttempts = verifyAttempts + 1;
         setVerifyAttempts(newAttempts);
@@ -3789,23 +3750,35 @@ function SmartLockerContent() {
         if (newAttempts >= MAX_VERIFY_ATTEMPTS) {
           setAiMessage({ type: 'error', text: `ตอบผิดครบ ${MAX_VERIFY_ATTEMPTS} ครั้ง กรุณาติดต่อผู้ฝากผ่านแชท` });
           toast.error(`ตอบผิดครบ ${MAX_VERIFY_ATTEMPTS} ครั้ง กรุณาติดต่อผู้ฝาก`);
+          if (token && selectedLocker?.item?.transactionId) {
+            fetch('/api/locker/release-lock', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                transactionId: selectedLocker.item.transactionId,
+                lockerId: selectedLocker.id
+              })
+            }).catch(() => {});
+          }
         } else {
           setAiMessage({ type: 'error', text: data.reason || `คำตอบไม่ถูกต้อง (เหลือ ${MAX_VERIFY_ATTEMPTS - newAttempts} ครั้ง)` });
         }
         return;
       }
 
-      if (data.isMatch) {
+      if (data.isMatch && data.otp) {
         const key = getVerifyAttemptsKey(selectedLocker);
         if (key) {
           try {
             localStorage.removeItem(key);
           } catch {}
         }
-        const generatedOtp = Math.floor(100000 + Math.random() * 900000);
-        const now = new Date();
+        const generatedOtp = Number(data.otp);
+        const now = data.otpGeneratedAt ? new Date(data.otpGeneratedAt) : new Date();
         if (selectedLocker) {
-          mqttPublish(`lostreturn/locker/${selectedLocker.id}/command`, JSON.stringify({ otp: String(generatedOtp) }));
           try {
             localStorage.setItem('smart_locker_verified_session', JSON.stringify({
               lockerId: selectedLocker.id,
@@ -3926,7 +3899,6 @@ function SmartLockerContent() {
         isDepositor={chatIsDepositor}
         clearActiveRoom={clearActiveRoom}
         setOtpGeneratedAt={setOtpGeneratedAt}
-        mqttPublish={mqttPublish}
         markRoomAsRead={markRoomAsRead}
       />
     );
@@ -3956,7 +3928,6 @@ function SmartLockerContent() {
         markAsCollected={markAsCollected}
         otpTimeLeft={otpTimeLeft}
         otpGeneratedAt={otpGeneratedAt}
-        mqttPublish={mqttPublish}
         currentUser={currentUser}
         currentUserId={user?.id}
       />
@@ -3986,7 +3957,6 @@ function SmartLockerContent() {
           currentUserId={user?.id}
           onLoginRequired={() => setShowLoginModal(true)}
           markAsCollected={markAsCollected}
-          mqttPublish={mqttPublish}
           otpGeneratedAt={otpGeneratedAt}
           otpTimeLeft={otpTimeLeft}
           setOtp={setOtp}
@@ -4018,6 +3988,7 @@ function SmartLockerContent() {
           handleVerify={handleVerify}
           attempts={verifyAttempts}
           maxAttempts={MAX_VERIFY_ATTEMPTS}
+          currentUserId={user?.id}
           onStartChat={async () => {
             if (!selectedLocker?.item?.transactionId || !user?.id) {
               toast.error('กรุณาเข้าสู่ระบบก่อน');

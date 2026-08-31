@@ -22,23 +22,38 @@ export const useComments = (postId: string) => {
 
   const fetchComments = useCallback(async (isSilent = false) => {
     if (!isSilent) {
-      setLoading(prev => comments.length === 0 ? true : prev);
+      setLoading(true);
     }
-    const { data: commentsData, error } = await supabase.from('comments').select('*').eq('post_id', postId).order('created_at', { ascending: true });
-    if (error) { setLoading(false); return; }
-    const userIds = [...new Set((commentsData || []).map(c => c.user_id))];
+    const { data: commentsData, error } = await supabase
+      .from('comments')
+      .select('*')
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true });
+
+    if (error || !commentsData) {
+      setLoading(false);
+      return;
+    }
+
+    const userIds = [...new Set(commentsData.map(c => c.user_id))];
     if (userIds.length > 0) {
-      const { data: profilesData } = await supabase.from('profiles').select('user_id, username, full_name, avatar_url').in('user_id', userIds);
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('user_id, username, full_name, avatar_url')
+        .in('user_id', userIds);
       const profilesMap = new Map((profilesData || []).map(p => [p.user_id, p]));
-      const withProfiles = (commentsData || []).map(c => ({ ...c, profiles: profilesMap.get(c.user_id) || null })) as Comment[];
+      const withProfiles = commentsData.map(c => ({ ...c, profiles: profilesMap.get(c.user_id) || null } as Comment));
       const parentComments = withProfiles.filter(c => !c.parent_id);
       const childComments = withProfiles.filter(c => c.parent_id);
-      setComments(parentComments.map(parent => ({ ...parent, replies: childComments.filter(child => child.parent_id === parent.id) })));
+      setComments(parentComments.map(parent => ({
+        ...parent,
+        replies: childComments.filter(child => child.parent_id === parent.id)
+      })));
     } else {
       setComments([]);
     }
     setLoading(false);
-  }, [postId, comments.length]);
+  }, [postId]);
 
   useEffect(() => {
     if (postId) {

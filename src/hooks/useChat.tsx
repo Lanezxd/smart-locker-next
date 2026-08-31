@@ -31,6 +31,12 @@ export const useChat = (currentUserId: string | undefined) => {
   const [unreadCounts, setUnreadCounts] = useState<{ [roomId: string]: number }>({});
   
   const activeRoomIdRef = useRef<string | null>(null);
+  const roomsRef = useRef<ChatRoom[]>([]);
+
+  // Keep roomsRef synced with rooms state
+  useEffect(() => {
+    roomsRef.current = rooms;
+  }, [rooms]);
 
   // Mark a room as read via the server-side API
   const markRoomAsRead = useCallback(async (roomId: string) => {
@@ -85,39 +91,49 @@ export const useChat = (currentUserId: string | undefined) => {
   // Calculate total unread count
   const totalUnread = Object.values(unreadCounts).reduce((sum, c) => sum + c, 0);
 
-  // Fetch unread counts for all rooms
+  // Fetch unread counts for all rooms in a single batch query (Eliminates N+1 Query)
   const fetchUnreadCounts = useCallback(async () => {
     if (!currentUserId || rooms.length === 0) {
       setUnreadCounts({});
       return;
     }
 
+    const roomIds = rooms.map(r => r.id);
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('room_id')
+      .in('room_id', roomIds)
+      .neq('sender_id', currentUserId)
+      .or('is_read.eq.false,is_read.is.null');
+
+    if (error) {
+      console.error('Error fetching unread counts:', error);
+      return;
+    }
+
     const counts: { [roomId: string]: number } = {};
-
     for (const room of rooms) {
-      const { count, error } = await supabase
-        .from('chat_messages')
-        .select('*', { count: 'exact', head: true })
-        .eq('room_id', room.id)
-        .neq('sender_id', currentUserId)
-        .or('is_read.eq.false,is_read.is.null');
+      counts[room.id] = 0;
+    }
 
-      if (error) {
-        console.error('Error fetching unread counts:', error);
+    if (data) {
+      for (const msg of data) {
+        if (msg.room_id) {
+          counts[msg.room_id] = (counts[msg.room_id] || 0) + 1;
+        }
       }
-
-      counts[room.id] = count || 0;
     }
 
     setUnreadCounts(counts);
   }, [currentUserId, rooms]);
 
-  // Fetch all chat rooms for the current user
+  // Fetch all chat rooms for the current user (only rooms where user is depositor or claimer)
   const fetchRooms = useCallback(async () => {
     if (!currentUserId) return;
     const { data, error } = await supabase
       .from('chat_rooms')
       .select('*')
+      .or(`depositor_id.eq.${currentUserId},claimer_id.eq.${currentUserId}`)
       .order('created_at', { ascending: false });
 
     if (!error && data) {
@@ -239,10 +255,15 @@ export const useChat = (currentUserId: string | undefined) => {
       },
       (payload) => {
         const newMsg = payload.new as ChatMessageDB;
-        setMessages((prev) => [...prev, newMsg]);
-        // Auto-mark as read via server API since user is actively viewing this room
-        if (currentUserId && newMsg.sender_id !== currentUserId) {
-          markRoomAsRead(activeRoomId);
+        if (newMsg && newMsg.room_id === activeRoomId) {
+          setMessages((prev) => {
+            if (prev.some(m => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+          // Auto-mark as read via server API since user is actively viewing this room
+          if (currentUserId && newMsg.sender_id !== currentUserId) {
+            markRoomAsRead(activeRoomId);
+          }
         }
       }
     );
@@ -253,24 +274,38 @@ export const useChat = (currentUserId: string | undefined) => {
     };
   }, [activeRoomId, fetchMessages, markRoomAsRead, currentUserId]);
 
-  // Subscribe to new rooms
+  // Subscribe to room changes where the current user is a participant
   useEffect(() => {
     if (!currentUserId) return;
 
     fetchRooms();
 
     const channel = supabase.channel(`chat-rooms-realtime-${Date.now()}-${Math.random()}`);
-    channel.on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'chat_rooms',
-      },
-      () => {
-        fetchRooms();
-      }
-    );
+    channel
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_rooms',
+          filter: `depositor_id=eq.${currentUserId}`,
+        },
+        () => {
+          fetchRooms();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_rooms',
+          filter: `claimer_id=eq.${currentUserId}`,
+        },
+        () => {
+          fetchRooms();
+        }
+      );
     channel.subscribe();
 
     return () => {
@@ -283,7 +318,7 @@ export const useChat = (currentUserId: string | undefined) => {
     fetchUnreadCounts();
   }, [fetchUnreadCounts]);
 
-  // Listen for new messages across all rooms to update unread counts
+  // Listen for new messages across user's participating rooms to update unread counts
   useEffect(() => {
     if (!currentUserId) {
       return;
@@ -299,6 +334,14 @@ export const useChat = (currentUserId: string | undefined) => {
       },
       (payload) => {
         const msg = payload.new as ChatMessageDB;
+        if (!msg || !msg.room_id) return;
+
+        // Security check: Only process messages belonging to rooms where current user is a participant
+        const isUserRoom = roomsRef.current.some(r => r.id === msg.room_id);
+        if (!isUserRoom) {
+          return;
+        }
+
         const isNotSender = msg.sender_id !== currentUserId;
         
         // If message is not from current user and in the active room, mark as read

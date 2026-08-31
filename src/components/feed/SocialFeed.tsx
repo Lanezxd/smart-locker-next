@@ -140,13 +140,9 @@ export const SocialFeed = ({ isLoggedIn, isAdmin, userName, currentUserId, onLog
     );
   }, [allPosts, searchQuery]);
 
-  const handleLike = (id: string) => {
-    console.log('Liked post:', id);
-  };
+  const handleLike = (_id: string) => {};
 
-  const handleComment = (id: string) => {
-    console.log('Comment on post:', id);
-  };
+  const handleComment = (_id: string) => {};
 
   const handleCreatePostClick = () => {
     if (!isLoggedIn) {

@@ -37,24 +37,44 @@ export const useLikes = (postId: string, userId?: string) => {
   const toggleLike = async () => {
     if (!userId) return { error: new Error('Not authenticated') };
     setLoading(true);
-    if (isLiked) {
-      const { error } = await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', userId);
-      if (!error) {
-        setIsLiked(false);
-        setLikesCount(prev => Math.max(0, prev - 1));
-        await supabase.from('posts').update({ likes_count: likesCount - 1 }).eq('id', postId);
-      }
-      setLoading(false);
-      return { error };
-    } else {
-      const { error } = await supabase.from('likes').insert({ post_id: postId, user_id: userId });
-      if (!error) {
+
+    const wasLiked = isLiked;
+    // Optimistic UI state update immediately
+    setIsLiked(!wasLiked);
+    setLikesCount(prev => wasLiked ? Math.max(0, prev - 1) : prev + 1);
+
+    if (wasLiked) {
+      const { error } = await supabase
+        .from('likes')
+        .delete()
+        .eq('post_id', postId)
+        .eq('user_id', userId);
+
+      if (error) {
+        // Rollback optimistic update on error
         setIsLiked(true);
         setLikesCount(prev => prev + 1);
-        await supabase.from('posts').update({ likes_count: likesCount + 1 }).eq('id', postId);
+        setLoading(false);
+        return { error };
       }
+
       setLoading(false);
-      return { error };
+      return { error: null };
+    } else {
+      const { error } = await supabase
+        .from('likes')
+        .insert({ post_id: postId, user_id: userId });
+
+      if (error) {
+        // Rollback optimistic update on error
+        setIsLiked(false);
+        setLikesCount(prev => Math.max(0, prev - 1));
+        setLoading(false);
+        return { error };
+      }
+
+      setLoading(false);
+      return { error: null };
     }
   };
 
