@@ -226,8 +226,45 @@ const AdminDashboardPage = () => {
   const sendAdminMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedChatUser) return;
-    const { error } = await supabase.from('admin_messages').insert({ user_id: selectedChatUser, sender_type: 'admin', content: newMessage.trim() });
-    if (error) { toast.error('ไม่สามารถส่งข้อความได้'); } else { setNewMessage(''); }
+    const textToSend = newMessage.trim();
+    setNewMessage('');
+
+    const { data, error } = await supabase
+      .from('admin_messages')
+      .insert({ user_id: selectedChatUser, sender_type: 'admin', content: textToSend })
+      .select()
+      .single();
+
+    if (error) {
+      toast.error('ไม่สามารถส่งข้อความได้');
+      setNewMessage(textToSend);
+      return;
+    }
+
+    // Trigger notification email to the student
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        fetch('/api/send-chat-notification', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            type: 'admin',
+            sender_type: 'admin',
+            user_id: selectedChatUser,
+            content: textToSend,
+            messageId: data?.id,
+          }),
+        }).catch((err) => {
+          console.warn('Background student notification error:', err);
+        });
+      }
+    } catch (notifErr) {
+      console.warn('Failed to initiate send-chat-notification for student:', notifErr);
+    }
   };
 
   if (authLoading || adminLoading) {
