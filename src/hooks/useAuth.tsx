@@ -39,12 +39,40 @@ export const useAuth = () => {
     );
 
     // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        // Auto-recover if refresh token is revoked, expired, or invalid
+        if (
+          error.message?.includes('Refresh Token') ||
+          error.message?.includes('invalid_grant') ||
+          error.status === 400
+        ) {
+          supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+        }
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
       }
+      setLoading(false);
+    }).catch(async (err: unknown) => {
+      const authErr = err as { message?: string; status?: number };
+      if (
+        authErr?.message?.includes('Refresh Token') ||
+        authErr?.message?.includes('invalid_grant') ||
+        authErr?.status === 400
+      ) {
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+      }
+      setSession(null);
+      setUser(null);
+      setProfile(null);
       setLoading(false);
     });
 
@@ -118,11 +146,18 @@ export const useAuth = () => {
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      toast.error('ไม่สามารถออกจากระบบได้');
-      return { error };
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        // Fallback to local signout if server session is already invalid
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+      }
+    } catch {
+      await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
     }
+    setSession(null);
+    setUser(null);
+    setProfile(null);
     toast.success('ออกจากระบบแล้ว');
     return { error: null };
   };

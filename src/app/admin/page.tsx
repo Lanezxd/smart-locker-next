@@ -94,15 +94,40 @@ const AdminDashboardPage = () => {
   const fetchHistoryTransactions = useCallback(async () => {
     setHistoryLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      let { data: { session } } = await supabase.auth.getSession();
+      let token = session?.access_token;
+      
+      if (!token) {
+        const { data: refreshData } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        token = refreshData?.session?.access_token;
+      }
       if (!token) return;
 
-      const response = await fetch('/api/admin/transactions', {
+      let response = await fetch('/api/admin/transactions', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
+
+      // If token expired (401), auto-refresh session and retry once
+      if (response.status === 401) {
+        const { data: refreshData, error: refreshErr } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null }, error: new Error('Failed to refresh') }));
+        if (!refreshErr && refreshData?.session?.access_token) {
+          token = refreshData.session.access_token;
+          response = await fetch('/api/admin/transactions', {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+        } else {
+          // Session expired beyond recovery
+          await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+          toast.error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง');
+          router.push('/');
+          return;
+        }
+      }
+
       const result = await response.json();
       if (!response.ok || result.error) {
         throw new Error(result.error || 'Failed to fetch transaction history');
@@ -122,13 +147,19 @@ const AdminDashboardPage = () => {
           setUnreadHistoryCount(isNaN(diff) ? 0 : diff);
         }
       }
-    } catch (err) {
+    } catch (err: unknown) {
+      const errMsg = (err as Error)?.message || '';
       console.error('Fetch admin transactions error:', err);
-      toast.error('ไม่สามารถโหลดประวัติการทำรายการได้');
+      if (errMsg.includes('Unauthorized') || errMsg.includes('expired')) {
+        toast.error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง');
+        router.push('/');
+      } else {
+        toast.error('ไม่สามารถโหลดประวัติการทำรายการได้');
+      }
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [router]);
 
   const fetchChatUsers = useCallback(async () => {
     const { data: messages } = await supabase.from('admin_messages').select('user_id, content, created_at, is_read, sender_type').order('created_at', { ascending: false });
