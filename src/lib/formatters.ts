@@ -28,6 +28,21 @@ export function formatThaiDate(dateInput: string | Date | number | null | undefi
 }
 
 /**
+ * Format a Date to short Thai date: DD/MM/BBBB (e.g. "11/09/2569")
+ */
+export function formatThaiShortDate(dateInput: string | Date | number | null | undefined): string {
+  if (!dateInput) return '-';
+  const date = typeof dateInput === 'string' || typeof dateInput === 'number' ? new Date(dateInput) : dateInput;
+  if (isNaN(date.getTime())) return '-';
+
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const yearBE = date.getFullYear() + 543;
+
+  return `${day}/${month}/${yearBE}`;
+}
+
+/**
  * Format a Date to relative time in Thai (e.g. "เมื่อสักครู่", "5 นาทีที่แล้ว", "2 วันที่แล้ว")
  */
 export function getTimeAgo(dateInput: string | Date | number | null | undefined): string {

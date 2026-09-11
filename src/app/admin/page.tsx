@@ -1,18 +1,19 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   ChevronLeft, Shield, Trash2, Unlock, MessageSquare, Flag, 
-  Loader2, Package, Send, X, Ban
+  Loader2, Package, Send, X, Ban, History
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useAdmin } from '@/hooks/useAdmin';
 import { toast } from 'sonner';
 import { formatThaiDate } from '@/lib/formatters';
+import { TransactionHistoryTable, type EnrichedLockerTransaction } from '@/components/admin/TransactionHistoryTable';
 
-type TabType = 'lockers' | 'reports' | 'chats';
+type TabType = 'lockers' | 'history' | 'reports' | 'chats';
 
 interface Report {
   id: string;
@@ -61,52 +62,75 @@ const AdminDashboardPage = () => {
   const [activeTab, setActiveTab] = useState<TabType>('lockers');
   const [reports, setReports] = useState<Report[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [historyTransactions, setHistoryTransactions] = useState<EnrichedLockerTransaction[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [unreadHistoryCount, setUnreadHistoryCount] = useState<number>(0);
   const [chatUsers, setChatUsers] = useState<ChatUser[]>([]);
   const [selectedChatUser, setSelectedChatUser] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<AdminMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const activeTabRef = useRef(activeTab);
 
   useEffect(() => {
-    if (!authLoading && !adminLoading) {
-      if (!user || !isAdmin) { router.push('/'); return; }
-      fetchData();
-    }
-  }, [user, isAdmin, authLoading, adminLoading]);
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
-
-  useEffect(() => {
-    if (!isAdmin) return;
-    const channel = supabase.channel('admin-messages-realtime')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'admin_messages' }, (payload) => {
-        const msg = payload.new as AdminMessage;
-        if (selectedChatUser && msg.user_id === selectedChatUser) {
-          setChatMessages(prev => [...prev, msg]);
-        }
-        fetchChatUsers();
-      }).subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [isAdmin, selectedChatUser]);
-
-  const fetchData = () => { fetchReports(); fetchTransactions(); fetchChatUsers(); };
-
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     const { data, error } = await supabase
       .from('reports')
       .select('*, post:posts(id, title, content, user_id, image_url)')
       .order('created_at', { ascending: false });
     
     if (!error && data) setReports(data as Report[]);
-  };
+  }, []);
 
-  const fetchTransactions = async () => {
+  const fetchTransactions = useCallback(async () => {
     const { data } = await supabase.from('locker_transactions').select('*').eq('status', 'deposited').order('deposited_at', { ascending: false });
     if (data) setTransactions(data as Transaction[]);
-  };
+  }, []);
 
-  const fetchChatUsers = async () => {
+  const fetchHistoryTransactions = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
+
+      const response = await fetch('/api/admin/transactions', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const result = await response.json();
+      if (!response.ok || result.error) {
+        throw new Error(result.error || 'Failed to fetch transaction history');
+      }
+      const txs = result.transactions || [];
+      setHistoryTransactions(txs);
+
+      // Check unread / new transactions count
+      if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('admin_seen_history_count');
+        if (stored === null || activeTabRef.current === 'history') {
+          localStorage.setItem('admin_seen_history_count', String(txs.length));
+          setUnreadHistoryCount(0);
+        } else {
+          const storedCount = Number(stored) || 0;
+          const diff = Math.max(0, txs.length - storedCount);
+          setUnreadHistoryCount(isNaN(diff) ? 0 : diff);
+        }
+      }
+    } catch (err) {
+      console.error('Fetch admin transactions error:', err);
+      toast.error('ไม่สามารถโหลดประวัติการทำรายการได้');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const fetchChatUsers = useCallback(async () => {
     const { data: messages } = await supabase.from('admin_messages').select('user_id, content, created_at, is_read, sender_type').order('created_at', { ascending: false });
     if (!messages) return;
     const userMap = new Map<string, { last_message: string; last_message_at: string; unread_count: number }>();
@@ -126,7 +150,57 @@ const AdminDashboardPage = () => {
     });
     users.sort((a, b) => new Date(b.last_message_at!).getTime() - new Date(a.last_message_at!).getTime());
     setChatUsers(users);
-  };
+  }, []);
+
+  const fetchData = useCallback(() => {
+    fetchReports();
+    fetchTransactions();
+    fetchHistoryTransactions();
+    fetchChatUsers();
+  }, [fetchReports, fetchTransactions, fetchHistoryTransactions, fetchChatUsers]);
+
+  useEffect(() => {
+    if (!authLoading && !adminLoading) {
+      if (!user || !isAdmin) { router.push('/'); return; }
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      fetchData();
+    }
+  }, [user, isAdmin, authLoading, adminLoading, fetchData, router]);
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const channel = supabase.channel('admin-messages-realtime')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'admin_messages' }, (payload) => {
+        const msg = payload.new as AdminMessage;
+        if (selectedChatUser && msg.user_id === selectedChatUser) {
+          setChatMessages(prev => [...prev, msg]);
+        }
+        fetchChatUsers();
+      }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [isAdmin, selectedChatUser, fetchChatUsers]);
+
+  // Realtime subscription for locker transactions history with 500ms debounce
+  useEffect(() => {
+    if (!isAdmin) return;
+    let debounceTimer: NodeJS.Timeout;
+
+    const channel = supabase.channel('admin-locker-history-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'locker_transactions' }, () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          fetchTransactions();
+          fetchHistoryTransactions();
+        }, 500);
+      }).subscribe();
+
+    return () => {
+      clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [isAdmin, fetchTransactions, fetchHistoryTransactions]);
 
   const handleAdminDirectUnlock = async (transactionId: string, lockerId: number) => {
     setActionLoading(transactionId);
@@ -148,6 +222,10 @@ const AdminDashboardPage = () => {
           collector_contact: adminContact
         })
         .eq('id', transactionId);
+
+      if (dbError) {
+        throw new Error(dbError.message || 'Failed to update transaction status');
+      }
 
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
@@ -184,6 +262,7 @@ const AdminDashboardPage = () => {
       toast.error((err as Error)?.message || 'เกิดข้อผิดพลาดในการปลดล็อกตู้');
     } finally {
       fetchTransactions();
+      fetchHistoryTransactions();
       setActionLoading(null);
     }
   };
@@ -267,6 +346,16 @@ const AdminDashboardPage = () => {
     }
   };
 
+  const handleTabChange = (tabId: TabType) => {
+    setActiveTab(tabId);
+    if (tabId === 'history') {
+      setUnreadHistoryCount(0);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('admin_seen_history_count', String(historyTransactions.length));
+      }
+    }
+  };
+
   if (authLoading || adminLoading) {
     return <div className="min-h-screen bg-zinc-50 flex items-center justify-center"><Loader2 className="w-8 h-8 text-amber-500 animate-spin" /></div>;
   }
@@ -274,6 +363,7 @@ const AdminDashboardPage = () => {
 
   const tabs = [
     { id: 'lockers' as TabType, label: 'ตู้ฝากของ', icon: Package, count: transactions.length },
+    { id: 'history' as TabType, label: 'ประวัติการทำรายการ', icon: History, count: activeTab === 'history' ? 0 : unreadHistoryCount },
     { id: 'reports' as TabType, label: 'รายงาน', icon: Flag, count: reports.filter(r => r.status === 'pending').length },
     { id: 'chats' as TabType, label: 'แชท', icon: MessageSquare, count: chatUsers.reduce((sum, u) => sum + (u.unread_count || 0), 0) },
   ];
@@ -299,7 +389,7 @@ const AdminDashboardPage = () => {
           {tabs.map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabChange(tab.id)}
               className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs sm:text-sm font-semibold rounded-xl transition-all cursor-pointer ${activeTab === tab.id ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 shadow-md shadow-amber-500/20' : 'text-zinc-600 hover:text-zinc-800'}`}
             >
               <tab.icon className="w-4 h-4" />
@@ -344,6 +434,19 @@ const AdminDashboardPage = () => {
                 </div>
               ))
             )}
+          </div>
+        )}
+
+        {activeTab === 'history' && (
+          <div className="space-y-4">
+            <h2 className="text-base sm:text-lg font-semibold text-zinc-800 mb-4">
+              ประวัติการทำรายการทั้งหมด ({historyTransactions.length})
+            </h2>
+            <TransactionHistoryTable
+              transactions={historyTransactions}
+              loading={historyLoading}
+              onRefresh={fetchHistoryTransactions}
+            />
           </div>
         )}
 
