@@ -49,7 +49,8 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
                 className="w-24 h-24 rounded-2xl overflow-hidden border border-zinc-200 shrink-0 cursor-pointer relative group"
                 title="คลิกดูภาพขนาดใหญ่"
               >
-                <img src={transaction.image_url} alt="" className="w-full h-full object-cover" />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={transaction.image_url} alt="Transaction preview" className="w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
                   <Eye className="w-4 h-4" />
                 </div>

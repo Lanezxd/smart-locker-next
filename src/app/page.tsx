@@ -2793,6 +2793,11 @@ const ProfileView = ({
   refreshProfile?: () => Promise<void> | void;
 }) => {
   const [editMode, setEditMode] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [formData, setFormData] = useState({
     name: currentUser?.name || '',
     type: currentUser?.type || 'general',
@@ -2802,7 +2807,113 @@ const ProfileView = ({
     profileImage: currentUser?.profileImage || null
   });
 
+  // Only synchronize from currentUser when NOT in edit mode so user input is never wiped out
   useEffect(() => {
+    if (currentUser && !editMode) {
+      setFormData({
+        name: currentUser.name || '',
+        type: currentUser.type || 'general',
+        email: currentUser.email || '',
+        phone: currentUser.phone || '',
+        studentId: currentUser.studentId || '',
+        profileImage: currentUser.profileImage || null
+      });
+      setSelectedFile(null);
+      setPreviewUrl(null);
+    }
+  }, [currentUser, editMode]);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('กรุณาเลือกไฟล์รูปภาพ');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('ไฟล์ใหญ่เกินไป (สูงสุด 5MB)');
+      return;
+    }
+    setSelectedFile(file);
+    // Instant preview without expensive atob or base64 freezing
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        toast.error('กรุณาเข้าสู่ระบบใหม่อีกครั้ง');
+        setSaving(false);
+        return;
+      }
+
+      let avatarUrl = formData.profileImage;
+
+      // Upload newly selected image file
+      if (selectedFile) {
+        const fileExt = selectedFile.name.split('.').pop() || 'jpg';
+        // Append timestamp to ensure cache busting across browsers and CDNs
+        const filePath = `avatars/${user.id}_${Date.now()}.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('post-images')
+          .upload(filePath, selectedFile, { upsert: true });
+
+        if (uploadError) {
+          toast.error('อัปโหลดรูปไม่สำเร็จ: ' + (uploadError.message || ''));
+          setSaving(false);
+          return;
+        }
+
+        const { data: publicUrlData } = supabase.storage
+          .from('post-images')
+          .getPublicUrl(filePath);
+        avatarUrl = publicUrlData.publicUrl;
+      }
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          username: formData.name.trim(),
+          phone: formData.phone.trim(),
+          avatar_url: avatarUrl,
+        })
+        .eq('user_id', user.id);
+
+      if (updateError) {
+        toast.error('ไม่สามารถบันทึกข้อมูลได้: ' + (updateError.message || ''));
+        setSaving(false);
+        return;
+      }
+
+      await refreshProfile?.();
+      setCurrentUser({
+        ...formData,
+        name: formData.name.trim(),
+        phone: formData.phone.trim(),
+        profileImage: avatarUrl
+      });
+      setSelectedFile(null);
+      setPreviewUrl(null);
+      setEditMode(false);
+      toast.success('บันทึกข้อมูลสำเร็จ!');
+    } catch (err) {
+      console.error('Save profile error:', err);
+      toast.error('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditMode(false);
     if (currentUser) {
       setFormData({
         name: currentUser.name || '',
@@ -2813,63 +2924,8 @@ const ProfileView = ({
         profileImage: currentUser.profileImage || null
       });
     }
-  }, [currentUser]);
-
-  const handleSave = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      let avatarUrl = formData.profileImage;
-
-      if (formData.profileImage && formData.profileImage.startsWith('data:')) {
-        const base64 = formData.profileImage.split(',')[1];
-        const byteArray = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-        const ext = formData.profileImage.includes('image/png') ? 'png' : 'jpg';
-        const filePath = `avatars/${user.id}.${ext}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('post-images')
-          .upload(filePath, byteArray, { contentType: `image/${ext}`, upsert: true });
-
-        if (uploadError) {
-          toast.error('อัปโหลดรูปไม่สำเร็จ');
-          return;
-        }
-
-        const { data: publicUrlData } = supabase.storage
-          .from('post-images')
-          .getPublicUrl(filePath);
-        avatarUrl = publicUrlData.publicUrl;
-      }
-
-      await supabase
-        .from('profiles')
-        .update({
-          username: formData.name,
-          phone: formData.phone,
-          avatar_url: avatarUrl,
-        })
-        .eq('user_id', user.id);
-
-      await refreshProfile?.();
-      setCurrentUser({ ...formData, profileImage: avatarUrl });
-      setEditMode(false);
-      toast.success('บันทึกข้อมูลสำเร็จ');
-    } catch {
-      toast.error('เกิดข้อผิดพลาด');
-    }
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData({ ...formData, profileImage: reader.result as string });
-      };
-      reader.readAsDataURL(file);
-    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
   };
 
   return (
@@ -2889,16 +2945,31 @@ const ProfileView = ({
             {/* Avatar */}
             <div className="relative">
               <div className="w-24 h-24 rounded-full bg-white border-2 border-amber-300 shadow-md overflow-hidden flex items-center justify-center">
-                {formData.profileImage ? (
-                  <img src={formData.profileImage} alt="" className="w-full h-full object-cover" />
+                {(previewUrl || formData.profileImage) ? (
+                  <img 
+                    src={previewUrl || formData.profileImage || ''} 
+                    alt="Profile" 
+                    className="w-full h-full object-cover" 
+                  />
                 ) : (
-                  <span className="text-3xl font-semibold text-amber-700">{formData.name.charAt(0)}</span>
+                  <span className="text-3xl font-semibold text-amber-700">
+                    {(formData.name || 'U').charAt(0).toUpperCase()}
+                  </span>
                 )}
               </div>
               {editMode && (
-                <label className="absolute bottom-0 right-0 w-8 h-8 bg-gradient-to-r from-amber-400 to-yellow-500 rounded-full flex items-center justify-center cursor-pointer shadow-lg text-zinc-900">
+                <label 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="absolute bottom-0 right-0 w-8 h-8 bg-gradient-to-r from-amber-400 to-yellow-500 rounded-full flex items-center justify-center cursor-pointer shadow-lg text-zinc-900 hover:scale-105 transition-transform"
+                >
                   <Camera className="w-4 h-4" />
-                  <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                  <input 
+                    ref={fileInputRef} 
+                    type="file" 
+                    className="hidden" 
+                    accept="image/*" 
+                    onChange={handleImageUpload} 
+                  />
                 </label>
               )}
             </div>
@@ -2910,7 +2981,14 @@ const ProfileView = ({
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSave();
+                    }
+                  }}
                   className="text-lg font-semibold text-zinc-800 border-b border-amber-500 focus:outline-none bg-transparent w-full mb-1 text-center"
+                  placeholder="ชื่อผู้ใช้"
                 />
               ) : (
                 <h2 className="text-lg sm:text-xl font-semibold text-zinc-800">{formData.name}</h2>
@@ -2921,16 +2999,37 @@ const ProfileView = ({
               </div>
             </div>
 
-            <button
-              onClick={() => editMode ? handleSave() : setEditMode(true)}
-              className={`px-5 py-1.5 rounded-full font-medium text-xs transition-all shadow-sm cursor-pointer mt-1 ${
-                editMode 
-                  ? 'bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100' 
-                  : 'bg-white hover:bg-zinc-50 text-zinc-800 border border-zinc-200'
-              }`}
-            >
-              {editMode ? 'Save Changes' : 'Edit Profile'}
-            </button>
+            <div className="flex items-center gap-2 mt-1">
+              <button
+                type="button"
+                onClick={() => editMode ? handleSave() : setEditMode(true)}
+                disabled={saving}
+                className={`px-5 py-1.5 rounded-full font-medium text-xs transition-all shadow-sm cursor-pointer flex items-center gap-1.5 disabled:opacity-50 ${
+                  editMode 
+                    ? 'bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100' 
+                    : 'bg-white hover:bg-zinc-50 text-zinc-800 border border-zinc-200'
+                }`}
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>{editMode ? 'Save Changes' : 'Edit Profile'}</span>
+                )}
+              </button>
+
+              {editMode && !saving && (
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="px-3 py-1.5 rounded-full font-medium text-xs text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -2951,10 +3050,17 @@ const ProfileView = ({
                 <p className="text-[10px] text-zinc-400 font-normal">เบอร์โทรศัพท์</p>
                 {editMode ? (
                   <input
-                    type="text"
+                    type="tel"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSave();
+                      }
+                    }}
                     className="bg-transparent focus:outline-none w-full font-medium text-xs sm:text-sm text-zinc-800 border-b border-amber-400"
+                    placeholder="เบอร์โทรศัพท์"
                   />
                 ) : (
                   <p className="font-medium text-xs sm:text-sm text-zinc-800">{formData.phone || '-'}</p>

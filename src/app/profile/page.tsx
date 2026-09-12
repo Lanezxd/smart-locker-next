@@ -45,25 +45,41 @@ const ProfilePage = () => {
     if (file.size > 5 * 1024 * 1024) { toast.error('ไฟล์ใหญ่เกินไป (สูงสุด 5MB)'); return; }
     setUploading(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}/avatar.${fileExt}`;
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      // Append timestamp to ensure a unique URL and prevent aggressive browser & CDN caching of old avatars
+      const fileName = `avatars/${user.id}_${Date.now()}.${fileExt}`;
       const { error: uploadError } = await supabase.storage.from('post-images').upload(fileName, file, { upsert: true });
-      if (uploadError) { toast.error('ไม่สามารถอัปโหลดรูปภาพได้'); return; }
+      if (uploadError) { 
+        toast.error('ไม่สามารถอัปโหลดรูปภาพได้: ' + (uploadError.message || '')); 
+        return; 
+      }
       const { data: { publicUrl } } = supabase.storage.from('post-images').getPublicUrl(fileName);
       await updateProfile({ avatar_url: publicUrl });
       await refreshProfile?.();
+      toast.success('เปลี่ยนรูปโปรไฟล์สำเร็จ!');
     } catch {
       toast.error('เกิดข้อผิดพลาดในการอัปโหลด');
     } finally {
       setUploading(false);
+      if (e.target) {
+        e.target.value = '';
+      }
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await updateProfile({ username: formData.username, full_name: formData.full_name, phone: formData.phone });
-    setLoading(false);
+    try {
+      await updateProfile({ 
+        username: formData.username.trim(), 
+        full_name: formData.full_name.trim(), 
+        phone: formData.phone.trim() 
+      });
+      await refreshProfile?.();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSignOut = async () => {
