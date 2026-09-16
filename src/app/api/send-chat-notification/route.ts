@@ -6,8 +6,8 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit';
 
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-// Production-safe debounce delay (10 seconds)
-const DEBOUNCE_DELAY_MS = 10000;
+// Production-safe debounce delay (5 seconds)
+const DEBOUNCE_DELAY_MS = 5000;
 
 // In-memory cooldown store to prevent spamming notifications for the same thread within 5 minutes
 const emailCooldownMap = new Map<string, number>();
@@ -135,16 +135,6 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Missing roomId for locker chat notification' }, { status: 400 });
       }
 
-      // Check In-Memory Cooldown (5 minutes per room)
-      const cooldownKey = `locker:${roomId}`;
-      const lastSent = emailCooldownMap.get(cooldownKey);
-      if (lastSent && Date.now() - lastSent < 5 * 60 * 1000) {
-        return NextResponse.json({
-          skipped: true,
-          reason: 'Notification cooldown active for this chat room (already sent within 5 minutes)',
-        });
-      }
-
       // 1. Fetch Room Details
       const { data: room, error: roomError } = await supabaseAdmin
         .from('chat_rooms')
@@ -162,8 +152,18 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Recipient user ID could not be identified' }, { status: 400 });
       }
 
+      // Check In-Memory Cooldown (5 minutes per recipient in this room)
+      const cooldownKey = `locker:${roomId}:to:${receiverUserId}`;
+      const lastSent = emailCooldownMap.get(cooldownKey);
+      if (lastSent && Date.now() - lastSent < 5 * 60 * 1000) {
+        return NextResponse.json({
+          skipped: true,
+          reason: 'Notification cooldown active for this recipient in chat room (already sent within 5 minutes)',
+        });
+      }
+
       // =======================================================================
-      // 3. 10-SECOND DEBOUNCE DELAY (Check if recipient opens chat immediately)
+      // 3. 5-SECOND DEBOUNCE DELAY (Check if recipient opens chat immediately)
       // =======================================================================
       await delay(DEBOUNCE_DELAY_MS);
 
@@ -209,7 +209,7 @@ export async function POST(req: Request) {
       }
 
       // =======================================================================
-      // 5. CHECK RECIPIENT ONLINE STATUS (last_seen_at <= 90s)
+      // 5. CHECK RECIPIENT ONLINE STATUS (last_seen_at <= 45s)
       // =======================================================================
       const { data: recipientProfile } = await supabaseAdmin
         .from('profiles')
@@ -221,10 +221,10 @@ export async function POST(req: Request) {
         const lastSeen = new Date(recipientProfile.last_seen_at).getTime();
         const diffSeconds = (Date.now() - lastSeen) / 1000;
 
-        if (diffSeconds <= 90) {
+        if (diffSeconds <= 45) {
           return NextResponse.json({
             skipped: true,
-            reason: 'Recipient is currently online on the website (last_seen within 90s)',
+            reason: 'Recipient is currently online on the website (last_seen within 45s)',
           });
         }
       }
@@ -361,7 +361,7 @@ export async function POST(req: Request) {
           if (adminProfile?.last_seen_at) {
             const lastSeen = new Date(adminProfile.last_seen_at).getTime();
             const diffSeconds = (now - lastSeen) / 1000;
-            if (diffSeconds <= 90) {
+            if (diffSeconds <= 45) {
               anyAdminOnline = true;
               break;
             }
@@ -371,7 +371,7 @@ export async function POST(req: Request) {
         if (anyAdminOnline) {
           return NextResponse.json({
             skipped: true,
-            reason: 'An admin is currently online on the website (last_seen within 90s)',
+            reason: 'An admin is currently online on the website (last_seen within 45s)',
           });
         }
       }
@@ -406,7 +406,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Missing user_id for recipient' }, { status: 400 });
       }
 
-      chatLink = `${baseUrl}/contact-admin`;
+      chatLink = baseUrl;
       cooldownKey = `user_reply:${studentUserId}`;
 
       // Check In-Memory Cooldown (5 minutes per reply to student)
@@ -471,10 +471,10 @@ export async function POST(req: Request) {
         const lastSeen = new Date(studentProfile.last_seen_at).getTime();
         const diffSeconds = (Date.now() - lastSeen) / 1000;
 
-        if (diffSeconds <= 90) {
+        if (diffSeconds <= 45) {
           return NextResponse.json({
             skipped: true,
-            reason: 'Recipient is currently online on the website (last_seen within 90s)',
+            reason: 'Recipient is currently online on the website (last_seen within 45s)',
           });
         }
       }
