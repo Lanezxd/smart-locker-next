@@ -1647,23 +1647,269 @@ const DashboardView = ({
   );
 };
 
-// Deposit View Component (Luxury Light Mode)
+// Deposit View Component (Interactive Multi-step Hardware-Synced Flow)
+type DepositStep = 
+  | 'form'                 // 1. Fill item information
+  | 'waiting_door_open'    // 2. Solenoid pulsed, waiting for physical door open + "Unlock Again" button
+  | 'waiting_item'         // 3. Door is OPEN, waiting for item placement + manual fallback
+  | 'waiting_door_close'   // 4. Item detected, waiting for door to be closed
+  | 'committing'           // 5. Door closed with item! Saving to Supabase
+  | 'success';             // 6. Complete! Summary & celebration screen
+
 const DepositView = ({ 
   setView, 
   selectedLocker, 
+  setSelectedLocker,
   depositForm, 
   setDepositForm, 
-  handleDeposit, 
-  loading 
+  createDeposit,
+  currentUser,
+  profile,
+  user,
+  setLockers,
 }: {
   setView: (view: ViewType) => void;
   selectedLocker: Locker | null;
+  setSelectedLocker: (locker: Locker | null) => void;
   depositForm: DepositFormData;
-  setDepositForm: (form: DepositFormData) => void;
-  handleDeposit: () => void;
-  loading: boolean;
+  setDepositForm: React.Dispatch<React.SetStateAction<DepositFormData>>;
+  createDeposit: (data: any) => Promise<LockerTransaction | null>;
+  currentUser: UserData | null;
+  profile: any;
+  user: any;
+  setLockers: React.Dispatch<React.SetStateAction<Locker[]>>;
 }) => {
-  // Listen for keyboard dismiss / viewport resize on mobile
+  const [step, setStep] = useState<DepositStep>('form');
+  const [hardwareDoorState, setHardwareDoorState] = useState<'OPEN' | 'CLOSED' | 'UNKNOWN'>('CLOSED');
+  const [hardwareHasItem, setHardwareHasItem] = useState<boolean>(false);
+  const [manualItemConfirmed, setManualItemConfirmed] = useState<boolean>(false);
+  const [cooldown, setCooldown] = useState<number>(0);
+  const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
+  const [savedTx, setSavedTx] = useState<LockerTransaction | null>(null);
+
+  // Lock guard ref to prevent duplicate concurrent commits
+  const isCommittingRef = useRef(false);
+
+  // Cooldown countdown timer for Unlock debounce
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
+  // Subscribe to real-time locker hardware status from Supabase
+  useEffect(() => {
+    if (!selectedLocker?.id) return;
+    const lockerId = selectedLocker.id;
+
+    // Initial status fetch
+    supabase
+      .from('lockers')
+      .select('door_state, has_item')
+      .eq('id', lockerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          if (data.door_state) setHardwareDoorState(data.door_state as any);
+          if (typeof data.has_item === 'boolean') setHardwareHasItem(data.has_item);
+        }
+      });
+
+    // Realtime changes listener
+    const channel = supabase
+      .channel(`deposit-hardware-sync-${lockerId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'lockers',
+          filter: `id=eq.${lockerId}`,
+        },
+        (payload) => {
+          const row = payload.new as { door_state?: string; has_item?: boolean };
+          if (row.door_state) {
+            setHardwareDoorState(row.door_state as any);
+          }
+          if (typeof row.has_item === 'boolean') {
+            setHardwareHasItem(row.has_item);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedLocker?.id]);
+
+  // Execute database transaction commit when door is closed with item inside
+  const executeCommit = useCallback(async () => {
+    if (!selectedLocker || isCommittingRef.current) return;
+    isCommittingRef.current = true;
+    setStep('committing');
+
+    try {
+      const result = await createDeposit({
+        locker_id: selectedLocker.id,
+        item_description: depositForm.name,
+        depositor_name: currentUser?.name || 'Unknown',
+        depositor_contact: profile?.phone || currentUser?.phone || user?.email || '',
+        security_question: depositForm.question,
+        security_answer: depositForm.answer,
+        user_id: user?.id,
+        image_base64: depositForm.image,
+      });
+
+      if (result) {
+        const now = new Date();
+        const formattedNow = `${now.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา ${now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`;
+
+        setLockers((prev) =>
+          prev.map((l) =>
+            l.id === selectedLocker.id
+              ? {
+                  ...l,
+                  status: 'occupied' as const,
+                  item: {
+                    name: depositForm.name,
+                    image: result.image_url || depositForm.image || '',
+                    date: formattedNow,
+                    depositedAt: now.toISOString(),
+                    finder: currentUser?.name || 'Unknown',
+                    question: depositForm.question,
+                    answer: depositForm.answer,
+                    transactionId: result.id,
+                    otp: undefined,
+                  },
+                }
+              : l
+          )
+        );
+
+        setSavedTx(result);
+        setStep('success');
+        toast.success('ฝากสิ่งของและบันทึกข้อมูลสำเร็จ!');
+      } else {
+        throw new Error('ไม่สามารถบันทึกรายการฝากได้');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+      isCommittingRef.current = false;
+      setStep('waiting_door_close');
+    }
+  }, [selectedLocker, depositForm, currentUser, profile, user, createDeposit, setLockers]);
+
+  // Reactive state machine driven by hardware status
+  useEffect(() => {
+    // 1. In waiting_door_open: Physical door opened -> proceed to waiting_item
+    if (step === 'waiting_door_open' && hardwareDoorState === 'OPEN') {
+      setStep('waiting_item');
+      toast.info('เปิดประตูตู้แล้ว กรุณาวางสิ่งของในช่องตู้');
+      return;
+    }
+
+    // 2. In waiting_item: Item placed while door is still open -> proceed to waiting_door_close
+    if (step === 'waiting_item' && (hardwareHasItem || manualItemConfirmed) && hardwareDoorState === 'OPEN') {
+      setStep('waiting_door_close');
+      toast.success('ตรวจพบสิ่งของแล้ว กรุณาปิดประตูตู้');
+      return;
+    }
+
+    // 3. In waiting_item: Door was closed WITHOUT placing item -> return to waiting_door_open
+    if (step === 'waiting_item' && hardwareDoorState === 'CLOSED' && !hardwareHasItem && !manualItemConfirmed) {
+      setManualItemConfirmed(false);
+      setStep('waiting_door_open');
+      toast.warning('ปิดประตูตู้โดยยังไม่ได้วางสิ่งของ');
+      return;
+    }
+
+    // 4. In waiting_item: Fast action (Item placed AND door closed) -> commit to database
+    if (step === 'waiting_item' && hardwareDoorState === 'CLOSED' && (hardwareHasItem || manualItemConfirmed)) {
+      executeCommit();
+      return;
+    }
+
+    // 5. In waiting_door_close: User takes item out while door is still open -> return to waiting_item
+    if (step === 'waiting_door_close' && !hardwareHasItem && !manualItemConfirmed && hardwareDoorState === 'OPEN') {
+      setStep('waiting_item');
+      toast.warning('นำสิ่งของออกจากตู้ กรุณาวางสิ่งของกลับเข้าไป');
+      return;
+    }
+
+    // 6. In waiting_door_close: Door closed -> commit to database!
+    if (step === 'waiting_door_close' && hardwareDoorState === 'CLOSED') {
+      if (hardwareHasItem || manualItemConfirmed) {
+        executeCommit();
+      } else {
+        setManualItemConfirmed(false);
+        setStep('waiting_door_open');
+        toast.warning('ปิดประตูตู้โดยไม่พบสิ่งของในตู้');
+      }
+      return;
+    }
+  }, [step, hardwareDoorState, hardwareHasItem, manualItemConfirmed, executeCommit]);
+
+  // Trigger unlock command via API with debounce cooldown
+  const triggerUnlock = async () => {
+    if (!selectedLocker?.id || cooldown > 0 || isUnlocking) return;
+    setIsUnlocking(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch('/api/locker/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          lockerId: Number(selectedLocker.id),
+          action: 'deposit',
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'ไม่สามารถส่งคำสั่งปลดล็อกตู้ได้');
+      }
+
+      setCooldown(4); // 4-second cooldown debounce
+      toast.success('ส่งสัญญาณปลดล็อกตู้แล้ว');
+    } catch (err: any) {
+      toast.error(err.message || 'เกิดข้อผิดพลาดในการปลดล็อก');
+    } finally {
+      setIsUnlocking(false);
+    }
+  };
+
+  // Start deposit: validate form and pulse unlock
+  const handleStartDeposit = async () => {
+    if (!depositForm.image) {
+      toast.error('กรุณาอัปโหลดรูปภาพสิ่งของ');
+      return;
+    }
+    if (!depositForm.name.trim()) {
+      toast.error('กรุณาระบุชื่อสิ่งของที่พบ');
+      return;
+    }
+    if (!depositForm.question.trim()) {
+      toast.error('กรุณาระบุคำถามสำหรับเจ้าของ');
+      return;
+    }
+    if (!depositForm.answer.trim()) {
+      toast.error('กรุณาระบุคำตอบเฉลย');
+      return;
+    }
+
+    setStep('waiting_door_open');
+    await triggerUnlock();
+  };
+
+  // Mobile viewport reset handlers
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -1698,22 +1944,70 @@ const DepositView = ({
     }, 120);
   };
 
+  // Cancel and preserve form inputs
+  const handleCancelOrEdit = () => {
+    setStep('form');
+  };
+
+  // Finish deposit flow on success
+  const handleFinishSuccess = () => {
+    setDepositForm({ name: '', image: null, question: '', answer: '' });
+    setSelectedLocker(null);
+    setView('dashboard');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  if (!selectedLocker) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-12 text-center space-y-4">
+        <p className="text-zinc-600 text-sm">ไม่พบตู้ที่เลือก กรุณาเลือกตู้ใหม่จากหน้าหลัก</p>
+        <button
+          onClick={() => setView('dashboard')}
+          className="px-4 py-2 bg-zinc-900 text-white rounded-xl text-xs font-medium cursor-pointer"
+        >
+          กลับสู่หน้าหลัก
+        </button>
+      </div>
+    );
+  }
+
+  // Active step numbering for breadcrumbs/indicator
+  const currentStepNum = 
+    step === 'form' ? 1 :
+    step === 'waiting_door_open' ? 2 :
+    step === 'waiting_item' ? 3 :
+    step === 'waiting_door_close' || step === 'committing' ? 4 : 5;
+
   return (
     <div className="max-w-2xl mx-auto px-3 sm:px-4 py-2.5 sm:py-6 animate-fade-in">
-      <button
-        onClick={() => setView('dashboard')}
-        className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
-      >
-        <ChevronLeft className="w-4 h-4" />
-        <span>Back to Dashboard</span>
-      </button>
+      {/* Back button (disabled during committing or success) */}
+      {step === 'form' ? (
+        <button
+          onClick={() => setView('dashboard')}
+          className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span>Back to Dashboard</span>
+        </button>
+      ) : step !== 'committing' && step !== 'success' ? (
+        <button
+          onClick={handleCancelOrEdit}
+          className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span>แก้ไขข้อมูลฟอร์ม</span>
+        </button>
+      ) : null}
 
       <div className="backdrop-blur-2xl bg-white/95 rounded-2xl sm:rounded-3xl p-4 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
-        <div className="flex items-center justify-between mb-3 sm:mb-6 pb-2.5 sm:pb-4 border-b border-zinc-100">
+        {/* Header Title */}
+        <div className="flex items-center justify-between mb-4 sm:mb-6 pb-2.5 sm:pb-4 border-b border-zinc-100">
           <div>
             <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-zinc-900">ฝากของ</h2>
             <p className="text-[11px] sm:text-sm text-zinc-500 mt-0.5 sm:mt-1 font-normal leading-relaxed">
-              กรอกรายละเอียดสำหรับตู้หมายเลข <span className="font-semibold text-zinc-700">#{String(selectedLocker?.id || 0).padStart(2, '0')}</span>
+              ตู้หมายเลข <span className="font-semibold text-zinc-700">#{String(selectedLocker.id).padStart(2, '0')}</span>
             </p>
           </div>
           <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-zinc-900 flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
@@ -1721,112 +2015,305 @@ const DepositView = ({
           </div>
         </div>
 
-        <div className="space-y-3 sm:space-y-6">
-          {/* Step 1: Upload Photo */}
-          <div className="space-y-1 sm:space-y-2">
-            <label className="block text-xs sm:text-base font-semibold text-zinc-900">1. อัปโหลดรูปสิ่งของ</label>
-            {depositForm.image ? (
-              <div className="relative h-36 sm:h-auto sm:max-h-80 rounded-xl sm:rounded-2xl overflow-hidden border border-zinc-200 bg-zinc-900/[0.03] shadow-sm flex items-center justify-center">
-                <img src={depositForm.image} alt="Preview" className="w-full h-full sm:max-h-80 object-contain rounded-xl sm:rounded-2xl" />
+        {/* Step Progress Bar */}
+        <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-6 sm:mb-8">
+          {[
+            { num: 1, label: 'กรอกข้อมูล' },
+            { num: 2, label: 'เปิดตู้' },
+            { num: 3, label: 'วางสิ่งของ' },
+            { num: 4, label: 'ปิดตู้' },
+          ].map((s) => {
+            const isCompleted = currentStepNum > s.num;
+            const isCurrent = currentStepNum === s.num;
+            return (
+              <div key={s.num} className="space-y-1.5 text-center">
+                <span
+                  className={`text-[10px] sm:text-xs block font-medium truncate ${
+                    isCompleted
+                      ? 'text-amber-700 font-semibold'
+                      : isCurrent
+                      ? 'text-zinc-900 font-bold'
+                      : 'text-zinc-400'
+                  }`}
+                >
+                  {s.label}
+                </span>
+                <div
+                  className={`h-1.5 sm:h-2 rounded-full transition-all duration-300 ${
+                    isCompleted
+                      ? 'bg-gradient-to-r from-amber-400 to-yellow-500 shadow-sm shadow-amber-400/20'
+                      : isCurrent
+                      ? 'bg-amber-200'
+                      : 'bg-zinc-200'
+                  }`}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ================= STEP 1: FORM INPUT ================= */}
+        {step === 'form' && (
+          <div className="space-y-3 sm:space-y-6">
+            {/* 1. Upload Photo */}
+            <div className="space-y-1 sm:space-y-2">
+              <label className="block text-xs sm:text-base font-semibold text-zinc-900">1. อัปโหลดรูปสิ่งของ</label>
+              {depositForm.image ? (
+                <div className="relative h-36 sm:h-auto sm:max-h-80 rounded-xl sm:rounded-2xl overflow-hidden border border-zinc-200 bg-zinc-900/[0.03] shadow-sm flex items-center justify-center">
+                  <img src={depositForm.image} alt="Preview" className="w-full h-full sm:max-h-80 object-contain rounded-xl sm:rounded-2xl" />
+                  <button
+                    type="button"
+                    onClick={() => setDepositForm({ ...depositForm, image: null })}
+                    className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg cursor-pointer hover:bg-rose-600 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <label className="w-full h-36 sm:h-auto sm:min-h-[160px] border-2 border-dashed border-zinc-300 hover:border-zinc-900 bg-zinc-50/80 rounded-xl sm:rounded-2xl p-3 sm:p-6 flex flex-col items-center justify-center transition-all cursor-pointer group">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white shadow-xs border border-zinc-200/80 flex items-center justify-center mb-1.5 sm:mb-2 group-hover:border-zinc-400 transition-colors">
+                    <Upload className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-400 group-hover:text-zinc-900 transition-colors stroke-[2]" />
+                  </div>
+                  <span className="text-xs sm:text-sm text-zinc-400 sm:text-zinc-800 font-normal sm:font-medium group-hover:text-zinc-950 text-center transition-colors">
+                    เลือกรูปจากอุปกรณ์
+                  </span>
+                  <span className="hidden sm:inline text-xs text-zinc-400 mt-1 font-normal text-center">
+                    รองรับ JPG, PNG
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          setDepositForm({ ...depositForm, image: reader.result as string });
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+
+            {/* 2. Details */}
+            <div className="space-y-1 sm:space-y-2">
+              <label className="block text-xs sm:text-base font-semibold text-zinc-900">2. สิ่งที่พบ</label>
+              <input
+                type="text"
+                placeholder="เช่น กุญแจรถ, กระเป๋าสตางค์"
+                className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                value={depositForm.name}
+                onChange={(e) => setDepositForm({ ...depositForm, name: e.target.value })}
+                onBlur={handleInputBlur}
+              />
+            </div>
+
+            {/* 3. Security Question & Answer */}
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 space-y-2.5 sm:space-y-4">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-zinc-200/80 flex items-center justify-center text-zinc-700 shrink-0">
+                  <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
+                </div>
+                <h3 className="font-semibold text-xs sm:text-base text-zinc-900 leading-snug">
+                  ตั้งคำถามที่เจ้าของตัวจริงเท่านั้นที่รู้
+                </h3>
+              </div>
+
+              <div className="space-y-2 sm:space-y-3.5 pt-0.5 sm:pt-1">
+                <div className="space-y-1 sm:space-y-1.5">
+                  <label className="block text-xs sm:text-sm font-semibold text-zinc-800">คำถาม</label>
+                  <input
+                    type="text"
+                    placeholder="เช่น รุ่นอะไร หรือมีตำหนิตรงไหน"
+                    className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                    value={depositForm.question}
+                    onChange={(e) => setDepositForm({ ...depositForm, question: e.target.value })}
+                    onBlur={handleInputBlur}
+                  />
+                </div>
+                <div className="space-y-1 sm:space-y-1.5">
+                  <label className="block text-xs sm:text-sm font-semibold text-zinc-800">คำตอบเฉลย</label>
+                  <input
+                    type="text"
+                    placeholder="คำตอบที่ถูกต้อง"
+                    className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                    value={depositForm.answer}
+                    onChange={(e) => setDepositForm({ ...depositForm, answer: e.target.value })}
+                    onBlur={handleInputBlur}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Action Button: Unlock to proceed */}
+            <div className="mt-4 sm:mt-8">
+              <button
+                type="button"
+                onClick={handleStartDeposit}
+                disabled={isUnlocking || !depositForm.image || !depositForm.name || !depositForm.question || !depositForm.answer}
+                className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-bold py-3 sm:py-4 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base cursor-pointer active:scale-[0.98]"
+              >
+                {isUnlocking ? (
+                  <>
+                    <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-zinc-950" />
+                    <span>กำลังส่งคำสั่งปลดล็อกตู้...</span>
+                  </>
+                ) : (
+                  <span>Unlock</span>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 2: WAITING FOR DOOR OPEN ================= */}
+        {step === 'waiting_door_open' && (
+          <div className="py-2 sm:py-4 animate-fade-in">
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl sm:rounded-3xl p-6 sm:p-10 text-center space-y-6">
+              <div className="relative inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-amber-100 text-amber-700 mx-auto shadow-inner">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-25 animate-ping" />
+                <Unlock className="w-8 h-8 sm:w-10 sm:h-10 relative z-10 text-amber-600" />
+              </div>
+
+              <div>
+                <h3 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight">
+                  กรุณาเปิดประตูตู้
+                </h3>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setDepositForm({ ...depositForm, image: null })}
-                  className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg cursor-pointer hover:bg-rose-600 transition-colors"
+                  onClick={triggerUnlock}
+                  disabled={cooldown > 0 || isUnlocking}
+                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[150px] sm:min-w-[170px] px-6 rounded-xl font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 hover:shadow-amber-400/25 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  {isUnlocking ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>กำลังส่งคำสั่ง...</span>
+                    </>
+                  ) : cooldown > 0 ? (
+                    <>
+                      <RotateCw className="w-4 h-4 animate-spin" />
+                      <span>Unlock Again ({cooldown}s)</span>
+                    </>
+                  ) : (
+                    <span>Unlock Again</span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCancelOrEdit}
+                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[150px] sm:min-w-[170px] px-6 rounded-xl font-medium text-xs sm:text-sm text-zinc-700 hover:text-zinc-950 bg-white hover:bg-zinc-50 border border-zinc-200/90 shadow-sm transition-all cursor-pointer flex items-center justify-center active:scale-[0.98]"
+                >
+                  แก้ไขข้อมูลสิ่งของ
                 </button>
               </div>
-            ) : (
-              <label className="w-full h-36 sm:h-auto sm:min-h-[160px] border-2 border-dashed border-zinc-300 hover:border-zinc-900 bg-zinc-50/80 rounded-xl sm:rounded-2xl p-3 sm:p-6 flex flex-col items-center justify-center transition-all cursor-pointer group">
-                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white shadow-xs border border-zinc-200/80 flex items-center justify-center mb-1.5 sm:mb-2 group-hover:border-zinc-400 transition-colors">
-                  <Upload className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-400 group-hover:text-zinc-900 transition-colors stroke-[2]" />
-                </div>
-                <span className="text-xs sm:text-sm text-zinc-400 sm:text-zinc-800 font-normal sm:font-medium group-hover:text-zinc-950 text-center transition-colors">
-                  เลือกรูปจากอุปกรณ์
-                </span>
-                <span className="hidden sm:inline text-xs text-zinc-400 mt-1 font-normal text-center">
-                  รองรับ JPG, PNG
-                </span>
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    const reader = new FileReader();
-                    reader.onloadend = () => { setDepositForm({ ...depositForm, image: reader.result as string }); };
-                    reader.readAsDataURL(file);
-                  }
-                }} />
-              </label>
-            )}
+            </div>
           </div>
+        )}
 
-          {/* Step 2: Details */}
-          <div className="space-y-1 sm:space-y-2">
-            <label className="block text-xs sm:text-base font-semibold text-zinc-900">2. สิ่งที่พบ</label>
-            <input
-              type="text"
-              placeholder="เช่น กุญแจรถ, กระเป๋าสตางค์"
-              className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
-              value={depositForm.name}
-              onChange={(e) => setDepositForm({ ...depositForm, name: e.target.value })}
-              onBlur={handleInputBlur}
-            />
-          </div>
-
-          {/* Step 3: Security */}
-          <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 space-y-2.5 sm:space-y-4">
-            <div className="flex items-center gap-2 sm:gap-3">
-              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-zinc-200/80 flex items-center justify-center text-zinc-700 shrink-0">
-                <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
+        {/* ================= STEP 3: WAITING FOR ITEM PLACEMENT ================= */}
+        {step === 'waiting_item' && (
+          <div className="py-2 sm:py-4 animate-fade-in">
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl sm:rounded-3xl p-6 sm:p-10 text-center space-y-6">
+              <div className="relative inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-sky-100 text-sky-700 mx-auto shadow-inner">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-25 animate-ping" />
+                <Box className="w-8 h-8 sm:w-10 sm:h-10 relative z-10 text-sky-600" />
               </div>
-              <h3 className="font-semibold text-xs sm:text-base text-zinc-900 leading-snug">
-                ตั้งคำถามที่เจ้าของตัวจริงเท่านั้นที่รู้
+
+              <div>
+                <h3 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight">
+                  กรุณานำสิ่งของวางลงในช่องตู้
+                </h3>
+              </div>
+
+              {/* Manual fallback button for small / clear items */}
+              <div className="pt-4 border-t border-zinc-200/80 space-y-2.5 max-w-sm mx-auto">
+                <p className="text-xs text-zinc-500 font-normal">
+                  กรณีสิ่งของมีขนาดเล็ก
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualItemConfirmed(true);
+                    toast.success('ยืนยันการวางสิ่งของเรียบร้อย');
+                  }}
+                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[180px] sm:min-w-[210px] px-6 rounded-xl font-semibold text-xs sm:text-sm bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-200/90 shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 mx-auto active:scale-[0.98]"
+                >
+                  <CheckCircle className="w-4 h-4 text-emerald-600" />
+                  <span>วางสิ่งของเรียบร้อยแล้ว</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 4: WAITING FOR DOOR CLOSE ================= */}
+        {step === 'waiting_door_close' && (
+          <div className="py-2 sm:py-4 animate-fade-in">
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl sm:rounded-3xl p-6 sm:p-10 text-center space-y-6">
+              <div className="relative inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-emerald-100 text-emerald-700 mx-auto shadow-inner">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-25 animate-ping" />
+                <CheckCircle className="w-8 h-8 sm:w-10 sm:h-10 relative z-10 text-emerald-600" />
+              </div>
+
+              <div>
+                <h3 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight leading-snug sm:leading-normal">
+                  <span className="block sm:inline">ตรวจพบสิ่งของในตู้แล้ว</span>
+                  <span className="hidden sm:inline"> </span>
+                  <span className="block sm:inline mt-1 sm:mt-0">กรุณาปิดประตูตู้</span>
+                </h3>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 5: COMMITTING TRANSACTION ================= */}
+        {step === 'committing' && (
+          <div className="bg-white rounded-2xl p-8 sm:p-12 text-center space-y-4 border border-zinc-200 shadow-sm animate-fade-in">
+            <Loader2 className="w-12 h-12 animate-spin text-amber-500 mx-auto" />
+            <div className="space-y-1.5">
+              <h3 className="text-base sm:text-lg font-bold text-zinc-900">
+                กำลังบันทึกข้อมูลการฝาก...
               </h3>
-            </div>
-
-            <div className="space-y-2 sm:space-y-3.5 pt-0.5 sm:pt-1">
-              <div className="space-y-1 sm:space-y-1.5">
-                <label className="block text-xs sm:text-sm font-semibold text-zinc-800">คำถาม</label>
-                <input
-                  type="text"
-                  placeholder="เช่น รุ่นอะไร หรือมีตำหนิตรงไหน"
-                  className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
-                  value={depositForm.question}
-                  onChange={(e) => setDepositForm({ ...depositForm, question: e.target.value })}
-                  onBlur={handleInputBlur}
-                />
-              </div>
-              <div className="space-y-1 sm:space-y-1.5">
-                <label className="block text-xs sm:text-sm font-semibold text-zinc-800">คำตอบเฉลย</label>
-                <input
-                  type="text"
-                  placeholder="คำตอบที่ถูกต้อง"
-                  className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
-                  value={depositForm.answer}
-                  onChange={(e) => setDepositForm({ ...depositForm, answer: e.target.value })}
-                  onBlur={handleInputBlur}
-                />
-              </div>
+              <p className="text-xs sm:text-sm text-zinc-500 max-w-xs mx-auto">
+                กรุณารอสักครู่ ระบบกำลังบันทึกข้อมูลและอัปเดตสถานะตู้ลงสู่ระบบ
+              </p>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Action Button */}
-        <div className="mt-4 sm:mt-8">
-          <button
-            onClick={handleDeposit}
-            disabled={loading || !depositForm.image || !depositForm.name || !depositForm.question || !depositForm.answer}
-            className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-900 font-semibold py-2.5 sm:py-4 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-xs sm:text-base cursor-pointer active:scale-[0.98]"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-zinc-900" />
-                <span>กำลังเชื่อมต่อตู้...</span>
-              </>
-            ) : (
-              <span>Unlock</span>
-            )}
-          </button>
-        </div>
+        {/* ================= STEP 6: SUCCESS CELEBRATION ================= */}
+        {step === 'success' && (
+          <div className="py-6 sm:py-10 animate-fade-in text-center space-y-6 sm:space-y-8 max-w-sm mx-auto">
+            <div className="inline-flex items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-emerald-100 text-emerald-600 mx-auto shadow-inner">
+              <CheckCircle className="w-12 h-12 sm:w-14 sm:h-14 text-emerald-600 stroke-[2.2]" />
+            </div>
+
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight">
+                ฝากของสำเร็จ
+              </h2>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleFinishSuccess}
+                className="w-full h-12 sm:h-13 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-bold rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all flex items-center justify-center text-sm sm:text-base cursor-pointer active:scale-[0.98]"
+              >
+                <span>กลับสู่หน้าหลัก</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3739,76 +4226,6 @@ function SmartLockerContent() {
     }
   };
 
-  const handleDeposit = async () => {
-    setLoading(true);
-    
-    if (selectedLocker) {
-      const result = await createDeposit({
-        locker_id: selectedLocker.id,
-        item_description: depositForm.name,
-        depositor_name: currentUser?.name || 'Unknown',
-        depositor_contact: profile?.phone || currentUser?.phone || user?.email || '',
-        security_question: depositForm.question,
-        security_answer: depositForm.answer,
-        user_id: user?.id,
-        image_base64: depositForm.image
-      });
-
-      if (result) {
-        const now = new Date();
-        const formattedNow = `${now.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา ${now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`;
-
-        setLockers(lockers.map(l => 
-          l.id === selectedLocker.id 
-            ? { 
-                ...l, 
-                status: 'occupied' as const, 
-                item: { 
-                  name: depositForm.name, 
-                  image: result.image_url || depositForm.image || '',
-                  date: formattedNow, 
-                  depositedAt: now.toISOString(),
-                  finder: currentUser?.name || 'Unknown',
-                  question: depositForm.question,
-                  answer: depositForm.answer,
-                  transactionId: result.id,
-                  otp: undefined
-                } 
-              } 
-            : l
-        ));
-        const lockerIdNum = Number(selectedLocker.id);
-        if (!isNaN(lockerIdNum)) {
-          const { data: { session } } = await supabase.auth.getSession();
-          const token = session?.access_token;
-          if (token) {
-            fetch('/api/locker/unlock', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-              },
-              body: JSON.stringify({
-                lockerId: lockerIdNum,
-                transactionId: result.id,
-                action: 'deposit'
-              })
-            }).catch(console.error);
-          }
-        }
-        toast.success('ฝากของสำเร็จ! ตู้จะเปิดอัตโนมัติ');
-        setView('dashboard');
-        setSelectedLocker(null);
-        setDepositForm({ name: '', image: null, question: '', answer: '' });
-        if (typeof window !== 'undefined') {
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-      } else {
-        toast.error('เกิดข้อผิดพลาด กรุณาลองใหม่');
-      }
-    }
-    setLoading(false);
-  };
 
   const handleVerify = async () => {
     if (!selectedLocker?.item) return;
@@ -4080,10 +4497,14 @@ function SmartLockerContent() {
         <DepositView 
           setView={setView} 
           selectedLocker={selectedLocker} 
+          setSelectedLocker={setSelectedLocker}
           depositForm={depositForm} 
           setDepositForm={setDepositForm} 
-          handleDeposit={handleDeposit} 
-          loading={loading}
+          createDeposit={createDeposit}
+          currentUser={currentUser}
+          profile={profile}
+          user={user}
+          setLockers={setLockers}
         />
       )}
       

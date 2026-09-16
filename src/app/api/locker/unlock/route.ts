@@ -72,9 +72,9 @@ export async function POST(req: Request) {
 
     // 5. Handle Deposit Unlock (Pre-condition Guard for Empty/Available Locker)
     if (action === 'deposit') {
-      // Stricter Rate Limiting for Deposit Action (Max 5 requests / min / IP)
+      // Stricter Rate Limiting for Deposit Action (Max 10 requests / min / IP)
       const depositRateLimit = checkRateLimit(req, {
-        limit: 5,
+        limit: 10,
         windowMs: 60 * 1000,
         prefix: 'locker-unlock-deposit',
       });
