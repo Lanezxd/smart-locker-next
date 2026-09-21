@@ -1976,40 +1976,12 @@ const DepositView = ({
     await triggerUnlock();
   };
 
-  // Mobile viewport reset handlers
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const handleResetScroll = () => {
-      setTimeout(() => {
-        const activeEl = document.activeElement;
-        const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-        if (!isTyping) {
-          window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-        }
-      }, 100);
-    };
-
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', handleResetScroll);
-    }
-
-    return () => {
-      if (window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', handleResetScroll);
-      }
-    };
-  }, []);
-
-  const handleInputBlur = () => {
-    setTimeout(() => {
-      const activeEl = document.activeElement;
-      const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-      if (!isTyping && typeof window !== 'undefined') {
-        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-      }
-    }, 120);
-  };
+  // Preserve locker data in case parent's selectedLocker is refreshed during deposit flow
+  const activeLockerRef = useRef<Locker | null>(selectedLocker);
+  if (selectedLocker && !activeLockerRef.current) {
+    activeLockerRef.current = selectedLocker;
+  }
+  const currentLocker = selectedLocker || activeLockerRef.current;
 
   // Cancel and preserve form inputs
   const handleCancelOrEdit = () => {
@@ -2026,7 +1998,7 @@ const DepositView = ({
     }
   };
 
-  if (!selectedLocker) {
+  if (!currentLocker && step !== 'success') {
     return (
       <div className="max-w-md mx-auto px-4 py-12 text-center space-y-4">
         <p className="text-zinc-600 text-sm">ไม่พบตู้ที่เลือก กรุณาเลือกตู้ใหม่จากหน้าหลัก</p>
@@ -2048,12 +2020,12 @@ const DepositView = ({
     step === 'waiting_door_close' || step === 'committing' ? 4 : 5;
 
   return (
-    <div className="max-w-2xl mx-auto px-3 sm:px-4 py-2.5 sm:py-6 animate-fade-in">
+    <div className="max-w-2xl mx-auto px-3 sm:px-4 py-2 sm:py-6 pb-28 sm:pb-12 animate-fade-in">
       {/* Back button (disabled during committing or success) */}
       {step === 'form' ? (
         <button
           onClick={() => setView('dashboard')}
-          className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+          className="mb-1.5 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
         >
           <ChevronLeft className="w-4 h-4" />
           <span>Back to Dashboard</span>
@@ -2061,29 +2033,29 @@ const DepositView = ({
       ) : step !== 'committing' && step !== 'success' ? (
         <button
           onClick={handleCancelOrEdit}
-          className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+          className="mb-1.5 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
         >
           <ChevronLeft className="w-4 h-4" />
           <span>แก้ไขข้อมูลฟอร์ม</span>
         </button>
       ) : null}
 
-      <div className="backdrop-blur-2xl bg-white/95 rounded-2xl sm:rounded-3xl p-4 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
+      <div className="backdrop-blur-2xl bg-white/95 rounded-2xl sm:rounded-3xl p-3.5 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
         {/* Header Title */}
-        <div className="flex items-center justify-between mb-4 sm:mb-6 pb-2.5 sm:pb-4 border-b border-zinc-100">
+        <div className="flex items-center justify-between mb-3 sm:mb-6 pb-2 sm:pb-4 border-b border-zinc-100">
           <div>
             <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-zinc-900">ฝากของ</h2>
             <p className="text-[11px] sm:text-sm text-zinc-500 mt-0.5 sm:mt-1 font-normal leading-relaxed">
-              ตู้หมายเลข <span className="font-semibold text-zinc-700">#{String(selectedLocker.id).padStart(2, '0')}</span>
+              ตู้หมายเลข <span className="font-semibold text-zinc-700">#{String(currentLocker?.id || '').padStart(2, '0')}</span>
             </p>
           </div>
-          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-zinc-900 flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
+          <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-zinc-900 flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
             <Package className="w-4 h-4 sm:w-6 sm:h-6 stroke-[2.2]" />
           </div>
         </div>
 
         {/* Step Progress Bar */}
-        <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-6 sm:mb-8">
+        <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-3.5 sm:mb-8">
           {[
             { num: 1, label: 'กรอกข้อมูล' },
             { num: 2, label: 'เปิดตู้' },
@@ -2093,7 +2065,7 @@ const DepositView = ({
             const isCompleted = currentStepNum > s.num;
             const isCurrent = currentStepNum === s.num;
             return (
-              <div key={s.num} className="space-y-1.5 text-center">
+              <div key={s.num} className="space-y-1 sm:space-y-1.5 text-center">
                 <span
                   className={`text-[10px] sm:text-xs block font-medium truncate ${
                     isCompleted
@@ -2121,12 +2093,12 @@ const DepositView = ({
 
         {/* ================= STEP 1: FORM INPUT ================= */}
         {step === 'form' && (
-          <div className="space-y-3 sm:space-y-6">
+          <div className="space-y-2.5 sm:space-y-6">
             {/* 1. Upload Photo */}
             <div className="space-y-1 sm:space-y-2">
               <label className="block text-xs sm:text-base font-semibold text-zinc-900">1. อัปโหลดรูปสิ่งของ</label>
               {depositForm.image ? (
-                <div className="relative h-36 sm:h-auto sm:max-h-80 rounded-xl sm:rounded-2xl overflow-hidden border border-zinc-200 bg-zinc-900/[0.03] shadow-sm flex items-center justify-center">
+                <div className="relative h-24 sm:h-auto sm:max-h-80 rounded-xl sm:rounded-2xl overflow-hidden border border-zinc-200 bg-zinc-900/[0.03] shadow-sm flex items-center justify-center">
                   <img src={depositForm.image} alt="Preview" className="w-full h-full sm:max-h-80 object-contain rounded-xl sm:rounded-2xl" />
                   <button
                     type="button"
@@ -2137,11 +2109,11 @@ const DepositView = ({
                   </button>
                 </div>
               ) : (
-                <label className="w-full h-36 sm:h-auto sm:min-h-[160px] border-2 border-dashed border-zinc-300 hover:border-zinc-900 bg-zinc-50/80 rounded-xl sm:rounded-2xl p-3 sm:p-6 flex flex-col items-center justify-center transition-all cursor-pointer group">
-                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white shadow-xs border border-zinc-200/80 flex items-center justify-center mb-1.5 sm:mb-2 group-hover:border-zinc-400 transition-colors">
+                <label className="w-full h-14 sm:h-auto sm:min-h-[150px] border-2 border-dashed border-zinc-300 hover:border-zinc-900 bg-zinc-50/80 rounded-xl sm:rounded-2xl p-2 sm:p-6 flex flex-col items-center justify-center transition-all cursor-pointer group">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-white shadow-xs border border-zinc-200/80 flex items-center justify-center sm:mb-2 group-hover:border-zinc-400 transition-colors shrink-0">
                     <Upload className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-400 group-hover:text-zinc-900 transition-colors stroke-[2]" />
                   </div>
-                  <span className="text-xs sm:text-sm text-zinc-400 sm:text-zinc-800 font-normal sm:font-medium group-hover:text-zinc-950 text-center transition-colors">
+                  <span className="hidden sm:inline text-sm text-zinc-800 font-medium group-hover:text-zinc-950 text-center transition-colors">
                     เลือกรูปจากอุปกรณ์
                   </span>
                   <span className="hidden sm:inline text-xs text-zinc-400 mt-1 font-normal text-center">
@@ -2172,34 +2144,32 @@ const DepositView = ({
               <input
                 type="text"
                 placeholder="เช่น กุญแจรถ, กระเป๋าสตางค์"
-                className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                className="w-full h-9 sm:h-12 px-3 sm:px-4 py-1.5 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
                 value={depositForm.name}
                 onChange={(e) => setDepositForm({ ...depositForm, name: e.target.value })}
-                onBlur={handleInputBlur}
               />
             </div>
 
             {/* 3. Security Question & Answer */}
-            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 space-y-2.5 sm:space-y-4">
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-xl sm:rounded-2xl p-3 sm:p-6 space-y-2 sm:space-y-4">
               <div className="flex items-center gap-2 sm:gap-3">
-                <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-zinc-200/80 flex items-center justify-center text-zinc-700 shrink-0">
-                  <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2]" />
+                <div className="w-6 h-6 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-zinc-200/80 flex items-center justify-center text-zinc-700 shrink-0">
+                  <ShieldCheck className="w-3.5 h-3.5 sm:w-5 sm:h-5 stroke-[2]" />
                 </div>
                 <h3 className="font-semibold text-xs sm:text-base text-zinc-900 leading-snug">
                   ตั้งคำถามที่เจ้าของตัวจริงเท่านั้นที่รู้
                 </h3>
               </div>
 
-              <div className="space-y-2 sm:space-y-3.5 pt-0.5 sm:pt-1">
+              <div className="space-y-1.5 sm:space-y-3.5 pt-0.5 sm:pt-1">
                 <div className="space-y-1 sm:space-y-1.5">
                   <label className="block text-xs sm:text-sm font-semibold text-zinc-800">คำถาม</label>
                   <input
                     type="text"
                     placeholder="เช่น รุ่นอะไร หรือมีตำหนิตรงไหน"
-                    className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                    className="w-full h-9 sm:h-12 px-3 sm:px-4 py-1.5 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
                     value={depositForm.question}
                     onChange={(e) => setDepositForm({ ...depositForm, question: e.target.value })}
-                    onBlur={handleInputBlur}
                   />
                 </div>
                 <div className="space-y-1 sm:space-y-1.5">
@@ -2207,22 +2177,21 @@ const DepositView = ({
                   <input
                     type="text"
                     placeholder="คำตอบที่ถูกต้อง"
-                    className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
+                    className="w-full h-9 sm:h-12 px-3 sm:px-4 py-1.5 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
                     value={depositForm.answer}
                     onChange={(e) => setDepositForm({ ...depositForm, answer: e.target.value })}
-                    onBlur={handleInputBlur}
                   />
                 </div>
               </div>
             </div>
 
             {/* Action Button: Unlock to proceed */}
-            <div className="mt-4 sm:mt-8">
+            <div className="mt-3.5 sm:mt-8">
               <button
                 type="button"
                 onClick={handleStartDeposit}
                 disabled={isUnlocking || !depositForm.image || !depositForm.name || !depositForm.question || !depositForm.answer}
-                className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-bold py-3 sm:py-4 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base cursor-pointer active:scale-[0.98]"
+                className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-bold py-2.5 sm:py-4 rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-xs sm:text-base cursor-pointer active:scale-[0.98]"
               >
                 {isUnlocking ? (
                   <>
@@ -2952,16 +2921,6 @@ const VerifyView = ({
     setView('dashboard');
   };
 
-  const handleInputBlur = () => {
-    setTimeout(() => {
-      const activeEl = document.activeElement;
-      const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-      if (!isTyping && typeof window !== 'undefined') {
-        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-      }
-    }, 120);
-  };
-
   return (
     <div className="max-w-2xl mx-auto px-3.5 sm:px-4 py-4 sm:py-6 min-h-[calc(100dvh-80px)] sm:min-h-0 flex flex-col justify-center animate-fade-in">
       <button
@@ -3015,7 +2974,6 @@ const VerifyView = ({
               className="w-full h-10 sm:h-12 px-3.5 sm:px-4 py-2 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
               value={verifyAnswer}
               onChange={(e) => setVerifyAnswer(e.target.value)}
-              onBlur={handleInputBlur}
               disabled={attempts >= maxAttempts}
             />
           </div>
