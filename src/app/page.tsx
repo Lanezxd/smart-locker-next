@@ -1757,6 +1757,29 @@ const DepositView = ({
   // Lock guard ref to prevent duplicate concurrent commits
   const isCommittingRef = useRef(false);
 
+  // Auto scroll to top on step transition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
+  }, [step]);
+
+  // Auto scroll to top when mobile virtual keyboard is dismissed without focusing another input
+  const handleInputBlur = () => {
+    setTimeout(() => {
+      if (typeof window === 'undefined') return;
+      const active = document.activeElement;
+      // If user moved focus to another input or textarea, do not scroll
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+        return;
+      }
+      // If page was scrolled by virtual keyboard, smoothly scroll back to top
+      if (window.scrollY > 0) {
+        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+      }
+    }, 120);
+  };
+
   // Cooldown countdown timer for Unlock debounce
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -1973,6 +1996,9 @@ const DepositView = ({
     }
 
     setStep('waiting_door_open');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
     await triggerUnlock();
   };
 
@@ -1986,6 +2012,9 @@ const DepositView = ({
   // Cancel and preserve form inputs
   const handleCancelOrEdit = () => {
     setStep('form');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
   };
 
   // Finish deposit flow on success
@@ -2147,6 +2176,7 @@ const DepositView = ({
                 className="w-full h-9 sm:h-12 px-3 sm:px-4 py-1.5 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
                 value={depositForm.name}
                 onChange={(e) => setDepositForm({ ...depositForm, name: e.target.value })}
+                onBlur={handleInputBlur}
               />
             </div>
 
@@ -2170,6 +2200,7 @@ const DepositView = ({
                     className="w-full h-9 sm:h-12 px-3 sm:px-4 py-1.5 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
                     value={depositForm.question}
                     onChange={(e) => setDepositForm({ ...depositForm, question: e.target.value })}
+                    onBlur={handleInputBlur}
                   />
                 </div>
                 <div className="space-y-1 sm:space-y-1.5">
@@ -2180,6 +2211,7 @@ const DepositView = ({
                     className="w-full h-9 sm:h-12 px-3 sm:px-4 py-1.5 sm:py-3 rounded-xl border border-zinc-300 hover:border-zinc-400 bg-white text-zinc-900 font-normal text-xs sm:text-sm placeholder:text-xs sm:placeholder:text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-zinc-900 shadow-sm transition-all"
                     value={depositForm.answer}
                     onChange={(e) => setDepositForm({ ...depositForm, answer: e.target.value })}
+                    onBlur={handleInputBlur}
                   />
                 </div>
               </div>
@@ -2405,6 +2437,13 @@ const CollectView = ({
 
   // Lock guard ref to prevent duplicate concurrent commits
   const isCommittingRef = useRef(false);
+
+  // Auto scroll to top on step transition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
+  }, [step]);
 
   // Cooldown countdown timer for Unlock debounce
   useEffect(() => {
