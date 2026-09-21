@@ -8,9 +8,10 @@ const unlockLockerSchema = z.object({
   lockerId: z.union([z.number().int().positive(), z.string().regex(/^\d+$/).transform(Number)]),
   transactionId: z.string().uuid('Invalid transactionId format').optional(),
   otp: z.string().trim().regex(/^\d{6}$/, 'รหัส OTP ต้องเป็นตัวเลข 6 หลัก').optional(),
-  action: z.enum(['collect', 'deposit', 'admin']).default('collect'),
+  action: z.enum(['collect', 'deposit', 'admin', 'complete']).default('collect'),
   collectorName: z.string().max(100, 'ชื่อยาวเกินไป').optional(),
   collectorContact: z.string().max(100, 'ข้อมูลติดต่อยาวเกินไป').optional(),
+  autoComplete: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
@@ -50,7 +51,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: firstError }, { status: 400 });
     }
 
-    const { lockerId, transactionId, otp, action, collectorName, collectorContact } = parsed.data;
+    const { lockerId, transactionId, otp, action, collectorName, collectorContact, autoComplete } = parsed.data;
 
     // 4. Handle Admin Override Unlock
     if (action === 'admin') {
@@ -70,7 +71,73 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, message: 'Admin unlocked locker successfully' });
     }
 
-    // 5. Handle Deposit Unlock (Pre-condition Guard for Empty/Available Locker)
+    // 5. Handle Complete Collect (Finalize when item taken & door closed)
+    if (action === 'complete') {
+      let query = supabaseAdmin
+        .from('locker_transactions')
+        .select('id, locker_id, status, collector_user_id, locked_by')
+        .eq('status', 'deposited');
+
+      if (transactionId) {
+        query = query.eq('id', transactionId);
+      } else {
+        query = query.eq('locker_id', lockerId);
+      }
+
+      const { data: transaction, error: txError } = await query
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (txError || !transaction) {
+        return NextResponse.json({ success: true, message: 'Transaction already completed or not found' });
+      }
+
+      // Authorization Guard: Only the user who claimed/locked this locker (or admin) can complete it
+      const isCollector = transaction.collector_user_id === user.id || transaction.locked_by === user.id;
+      if (!isCollector) {
+        const { data: roleData } = await supabaseAdmin
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('role', 'admin')
+          .maybeSingle();
+
+        if (!roleData) {
+          return NextResponse.json({ error: 'คุณไม่มีสิทธิ์สิ้นสุดรายการนี้' }, { status: 403 });
+        }
+      }
+
+      const { error: updateError } = await supabaseAdmin
+        .from('locker_transactions')
+        .update({
+          status: 'collected',
+          collected_at: new Date().toISOString(),
+          collector_user_id: transaction.collector_user_id || user.id,
+          collector_name: collectorName || user.email?.split('@')[0] || 'Collector',
+          collector_contact: collectorContact || user.email || '',
+          locked_by: null,
+          locked_until: null,
+          lock_reason: null,
+        })
+        .eq('id', transaction.id);
+
+      if (updateError) {
+        console.error('[API /api/locker/unlock] Error completing transaction:', updateError);
+        return NextResponse.json({ error: 'Database update failed' }, { status: 500 });
+      }
+
+      try {
+        await supabaseAdmin.rpc('mark_transaction_collected', { p_transaction_id: transaction.id });
+      } catch {
+        // Non-blocking
+      }
+
+      console.info(`[Audit Log] User ${user.id} completed collection for locker #${lockerId} (tx: ${transaction.id}) at ${new Date().toISOString()}`);
+      return NextResponse.json({ success: true, message: 'Collection completed successfully' });
+    }
+
+    // 6. Handle Deposit Unlock (Pre-condition Guard for Empty/Available Locker)
     if (action === 'deposit') {
       // Stricter Rate Limiting for Deposit Action (Max 10 requests / min / IP)
       const depositRateLimit = checkRateLimit(req, {
@@ -163,16 +230,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, message: 'Locker opened for deposit', lockerId });
     }
 
-    // 6. Handle Collect (Claim) Unlock with OTP Verification
-    if (!otp) {
-      return NextResponse.json({ error: 'กรุณากรอกรหัส OTP 6 หลัก' }, { status: 400 });
-    }
-
-    // Query active transaction for this locker (Selective columns to avoid over-fetching)
+    // 7. Handle Collect (Claim) Unlock with OTP Verification or "Unlock Again"
     let query = supabaseAdmin
       .from('locker_transactions')
-      .select('id, locker_id, otp, otp_generated_at, status')
-      .eq('status', 'deposited');
+      .select('id, locker_id, otp, otp_generated_at, status, collector_user_id, collected_at, locked_by')
+      .or('status.eq.deposited,status.eq.collected');
 
     if (transactionId) {
       query = query.eq('id', transactionId);
@@ -184,6 +246,31 @@ export async function POST(req: Request) {
 
     if (txError || !transaction) {
       return NextResponse.json({ error: 'Active deposit transaction not found' }, { status: 404 });
+    }
+
+    // Support "Unlock Again" without OTP if user is already collecting or collected recently:
+    if (!otp) {
+      const isMyCollecting = (transaction.collector_user_id === user.id || transaction.locked_by === user.id) && transaction.status === 'deposited';
+      const isMyRecentCollected = transaction.status === 'collected' && transaction.collector_user_id === user.id && transaction.collected_at
+        ? (Date.now() - new Date(transaction.collected_at).getTime() < 5 * 60 * 1000)
+        : false;
+
+      if (isMyCollecting || isMyRecentCollected) {
+        await publishMqttServer(`lostreturn/locker/${lockerId}/command`, 'OPEN');
+        return NextResponse.json({
+          success: true,
+          message: 'ส่งสัญญาณปลดล็อกตู้ซ้ำสำเร็จ',
+          lockerId,
+          transactionId: transaction.id
+        });
+      } else {
+        return NextResponse.json({ error: 'กรุณากรอกรหัส OTP 6 หลัก' }, { status: 400 });
+      }
+    }
+
+    // If already collected
+    if (transaction.status === 'collected') {
+      return NextResponse.json({ error: 'รายการนี้ได้รับการรับไปเรียบร้อยแล้ว' }, { status: 400 });
     }
 
     // Verify OTP
@@ -199,35 +286,52 @@ export async function POST(req: Request) {
       }
     }
 
-    // Update transaction to collected and clear lock fields
-    const { error: updateError } = await supabaseAdmin
-      .from('locker_transactions')
-      .update({
-        status: 'collected',
-        collected_at: new Date().toISOString(),
-        collector_user_id: user.id,
-        collector_name: collectorName || user.email?.split('@')[0] || 'Collector',
-        collector_contact: collectorContact || user.email || '',
-        locked_by: null,
-        locked_until: null,
-        lock_reason: null,
-      })
-      .eq('id', transaction.id);
+    if (autoComplete) {
+      // Legacy/simple modal: update transaction to collected directly
+      const { error: updateError } = await supabaseAdmin
+        .from('locker_transactions')
+        .update({
+          status: 'collected',
+          collected_at: new Date().toISOString(),
+          collector_user_id: user.id,
+          collector_name: collectorName || user.email?.split('@')[0] || 'Collector',
+          collector_contact: collectorContact || user.email || '',
+          locked_by: null,
+          locked_until: null,
+          lock_reason: null,
+        })
+        .eq('id', transaction.id);
 
-    if (updateError) {
-      console.error('[API /api/locker/unlock] Error updating transaction:', updateError);
-      return NextResponse.json({ error: 'Database update failed' }, { status: 500 });
-    }
+      if (updateError) {
+        console.error('[API /api/locker/unlock] Error updating transaction:', updateError);
+        return NextResponse.json({ error: 'Database update failed' }, { status: 500 });
+      }
 
-    // Call stored RPC procedure if available
-    try {
-      await supabaseAdmin.rpc('mark_transaction_collected', { p_transaction_id: transaction.id });
-    } catch {
-      // Non-blocking if already updated directly
+      try {
+        await supabaseAdmin.rpc('mark_transaction_collected', { p_transaction_id: transaction.id });
+      } catch {}
+    } else {
+      // Keep status = 'deposited' so locker does NOT disappear if user navigates back to dashboard!
+      // Set collector info and hold lock for 10 minutes
+      const { error: updateError } = await supabaseAdmin
+        .from('locker_transactions')
+        .update({
+          collector_user_id: user.id,
+          collector_name: collectorName || user.email?.split('@')[0] || 'Collector',
+          collector_contact: collectorContact || user.email || '',
+          locked_by: user.id,
+          locked_until: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          lock_reason: 'collecting',
+        })
+        .eq('id', transaction.id);
+
+      if (updateError) {
+        console.error('[API /api/locker/unlock] Error setting collecting lock:', updateError);
+      }
     }
 
     // Audit Log
-    console.info(`[Audit Log] User ${user.id} claimed locker #${lockerId} (tx: ${transaction.id}) at ${new Date().toISOString()}`);
+    console.info(`[Audit Log] User ${user.id} unlocked locker #${lockerId} for collection (tx: ${transaction.id}) at ${new Date().toISOString()}`);
 
     // Publish MQTT OPEN command from server
     await publishMqttServer(`lostreturn/locker/${lockerId}/command`, 'OPEN');

@@ -217,7 +217,8 @@ export function CollectModal({ locker, isOpen, onClose, onCollect, transactionId
           otp: otp.trim(),
           collectorName,
           collectorContact,
-          action: 'collect'
+          action: 'collect',
+          autoComplete: true
         })
       });
 

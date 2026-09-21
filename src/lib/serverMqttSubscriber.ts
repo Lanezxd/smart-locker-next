@@ -145,21 +145,73 @@ export function startMqttLockerSubscriber(): MqttClient | null {
         updated_at: new Date().toISOString(),
       };
 
+      // Check for keypad collection success event (e.g. {"keypad":"SUCCESS"})
+      const keypadVal = payloadObj.keypad ?? payloadObj.KEYPAD;
+      const isKeypadSuccess = typeof keypadVal === 'string' && keypadVal.trim().toUpperCase() === 'SUCCESS';
+
+      if (isKeypadSuccess) {
+        console.log(`[MQTT Server Subscriber] Keypad pickup SUCCESS event received for locker #${lockerId}`);
+
+        // Find active deposited transaction for this locker
+        const { data: activeTx, error: txError } = await supabaseAdmin
+          .from('locker_transactions')
+          .select('id, locker_id, user_id, collector_user_id')
+          .eq('locker_id', lockerId)
+          .eq('status', 'deposited')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (txError) {
+          console.error(`[MQTT Server Subscriber] Error querying active transaction for locker #${lockerId}:`, txError);
+        } else if (activeTx) {
+          const { error: updateTxError } = await supabaseAdmin
+            .from('locker_transactions')
+            .update({
+              status: 'collected',
+              collected_at: new Date().toISOString(),
+              collector_name: 'Keypad (หน้าตู้)',
+              locked_by: null,
+              locked_until: null,
+              lock_reason: null,
+            })
+            .eq('id', activeTx.id);
+
+          if (updateTxError) {
+            console.error(`[MQTT Server Subscriber] Error completing transaction ${activeTx.id}:`, updateTxError);
+          } else {
+            console.log(`[MQTT Server Subscriber] Transaction ${activeTx.id} marked as 'collected' via Keypad`);
+            try {
+              await supabaseAdmin.rpc('mark_transaction_collected', { p_transaction_id: activeTx.id });
+            } catch {
+              // Non-blocking
+            }
+          }
+        } else {
+          console.warn(`[MQTT Server Subscriber] No active 'deposited' transaction found for locker #${lockerId}`);
+        }
+
+        // Force locker state to cleared (empty and closed)
+        updateData.has_item = false;
+        updateData.door_state = 'CLOSED';
+        updateData.solenoid = 'LOCKED';
+      }
+
       // 1. Check doorState (support case-insensitive: doorState, door_state, doorstate, DOORSTATE)
       const doorStateVal = payloadObj.doorState ?? payloadObj.door_state ?? payloadObj.doorstate ?? payloadObj.DOORSTATE;
-      if (doorStateVal !== undefined && doorStateVal !== null) {
+      if (doorStateVal !== undefined && doorStateVal !== null && !isKeypadSuccess) {
         updateData.door_state = String(doorStateVal).trim().toUpperCase();
       }
 
       // 2. Check hasItem (support case-insensitive: hasItem, has_item, hasitem, HASITEM)
       const hasItemVal = payloadObj.hasItem ?? payloadObj.has_item ?? payloadObj.hasitem ?? payloadObj.HASITEM;
-      if (hasItemVal !== undefined && hasItemVal !== null) {
+      if (hasItemVal !== undefined && hasItemVal !== null && !isKeypadSuccess) {
         updateData.has_item = hasItemVal === true || String(hasItemVal).trim().toLowerCase() === 'true';
       }
 
       // 3. Check solenoid (support case-insensitive: solenoid, SOLENOID)
       const solenoidVal = payloadObj.solenoid ?? payloadObj.SOLENOID;
-      if (solenoidVal !== undefined && solenoidVal !== null) {
+      if (solenoidVal !== undefined && solenoidVal !== null && !isKeypadSuccess) {
         updateData.solenoid = String(solenoidVal).trim().toUpperCase();
       }
 

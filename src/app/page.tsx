@@ -95,7 +95,7 @@ interface DepositFormData {
   answer: string;
 }
 
-type ViewType = 'home' | 'dashboard' | 'deposit' | 'verify' | 'chat' | 'otp' | 'otp_display' | 'profile' | 'chat_list';
+type ViewType = 'home' | 'dashboard' | 'deposit' | 'verify' | 'chat' | 'otp' | 'otp_display' | 'profile' | 'chat_list' | 'collect';
 
 // Initial Lockers - All empty, data will be synced from database
 const initialLockers: Locker[] = [
@@ -109,6 +109,35 @@ const getVerifyAttemptsKey = (locker: Locker | null) => {
   if (!locker) return null;
   const txnId = locker.item?.transactionId;
   return txnId ? `smart_locker_attempts_txn_${txnId}` : `smart_locker_attempts_locker_${locker.id}`;
+};
+
+interface VerifiedLockerSession {
+  lockerId: number;
+  otp: number;
+  otpGeneratedAt: string;
+  userRole: 'receiver';
+  view: ViewType;
+  remaining: number;
+  collectUnlocked?: boolean;
+}
+
+const getActiveVerifiedSession = (): VerifiedLockerSession | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('smart_locker_verified_session');
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    if (!session || !session.otp || !session.otpGeneratedAt || !session.lockerId) return null;
+    const elapsed = Math.floor((Date.now() - new Date(session.otpGeneratedAt).getTime()) / 1000);
+    if (elapsed < 600) {
+      return { ...session, remaining: 600 - elapsed };
+    } else {
+      localStorage.removeItem('smart_locker_verified_session');
+      return null;
+    }
+  } catch {
+    return null;
+  }
 };
 
 // Header Component (used for dashboard, deposit, verify, profile, chat_list views)
@@ -1247,6 +1276,7 @@ const DashboardView = ({
   const [unlocking, setUnlocking] = useState<number | null>(null);
   const [errors, setErrors] = useState<{ [lockerId: number]: string }>({});
   const [viewingImage, setViewingImage] = useState<{ src: string; name: string } | null>(null);
+  const activeSession = getActiveVerifiedSession();
 
   const handleOtpChange = (lockerId: number, value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 6);
@@ -1302,25 +1332,20 @@ const DashboardView = ({
         return;
       }
 
-      setLockers(lockers.map(l => 
-        l.id === locker.id 
-          ? { ...l, status: 'available' as const, item: null } 
-          : l
-      ));
-      toast.success(`ตู้ ${String(locker.id).padStart(2, '0')} ปลดล็อกแล้ว! กรุณาหยิบของ`);
+      setSelectedLocker(locker);
       setOtpInputs({ ...otpInputs, [locker.id]: '' });
-
       try {
-        localStorage.removeItem('smart_locker_verified_session');
-        const key = getVerifyAttemptsKey(locker);
-        if (key) localStorage.removeItem(key);
+        const raw = localStorage.getItem('smart_locker_verified_session');
+        const parsed = raw ? JSON.parse(raw) : {};
+        localStorage.setItem('smart_locker_verified_session', JSON.stringify({
+          ...parsed,
+          lockerId: locker.id,
+          view: 'collect',
+          collectUnlocked: true,
+        }));
       } catch {}
-      setOtp(0);
-      setOtpGeneratedAt(null);
-      setOtpTimeLeft?.(0);
-      if (typeof window !== 'undefined') {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
+      setView('collect');
+      toast.success(`ปลดล็อกตู้ ${String(locker.id).padStart(2, '0')} สำเร็จ!`);
     } catch (err) {
       console.error('Error unlocking locker:', err);
       toast.error('เกิดข้อผิดพลาดในการปลดล็อกตู้');
@@ -1413,175 +1438,216 @@ const DashboardView = ({
       </div>
 
       {/* Locker Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-        {lockers.map((locker) => (
-          <div
-            key={locker.id}
-            className={`relative p-5 rounded-3xl flex flex-col justify-between transition-all duration-300 backdrop-blur-xl ${
-              locker.status === 'available' && userRole === 'finder'
-                ? 'bg-white border border-zinc-200 hover:border-emerald-400 hover:shadow-[0_8px_30px_rgba(16,185,129,0.12)] shadow-sm group cursor-pointer'
-                : locker.status === 'occupied'
-                ? locker.item?.isLockedByOther
-                  ? 'bg-white border border-zinc-200/80 shadow-sm opacity-90'
-                  : 'bg-white border border-amber-300/80 hover:border-amber-400 shadow-[0_4px_20px_rgba(245,158,11,0.08)] cursor-pointer'
-                : locker.status === 'available'
-                ? 'bg-white border border-zinc-200 shadow-sm'
-                : 'bg-zinc-100 border border-zinc-200 cursor-not-allowed opacity-50'
-            }`}
-            onClick={() => {
-              if (locker.status === 'available' && userRole === 'finder') {
-                if (!currentUser) {
-                  toast.error('กรุณาเข้าสู่ระบบก่อนทำรายการ');
-                  onLoginRequired();
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+        {lockers.map((locker) => {
+          const isCollectingThisLocker = Boolean(
+            activeSession &&
+            activeSession.lockerId === locker.id &&
+            activeSession.collectUnlocked &&
+            userRole === 'receiver' &&
+            locker.status === 'occupied'
+          );
+
+          return (
+            <div
+              key={locker.id}
+              className={`relative p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl flex flex-col justify-between transition-all duration-300 backdrop-blur-xl ${
+                locker.status === 'available' && userRole === 'finder'
+                  ? 'bg-white border border-zinc-200 hover:border-emerald-400 hover:shadow-[0_8px_30px_rgba(16,185,129,0.12)] shadow-sm group cursor-pointer'
+                  : isCollectingThisLocker
+                  ? 'bg-amber-50/40 border-2 border-amber-400 hover:border-amber-500 shadow-[0_4px_24px_rgba(245,158,11,0.15)] cursor-pointer'
+                  : locker.status === 'occupied'
+                  ? locker.item?.isLockedByOther
+                    ? 'bg-white border border-zinc-200/80 shadow-sm opacity-90'
+                    : 'bg-white border border-amber-300/80 hover:border-amber-400 shadow-[0_4px_20px_rgba(245,158,11,0.08)] cursor-pointer'
+                  : locker.status === 'available'
+                  ? 'bg-white border border-zinc-200 shadow-sm'
+                  : 'bg-zinc-100 border border-zinc-200 cursor-not-allowed opacity-50'
+              }`}
+              onClick={() => {
+                if (locker.status === 'available' && userRole === 'finder') {
+                  if (!currentUser) {
+                    toast.error('กรุณาเข้าสู่ระบบก่อนทำรายการ');
+                    onLoginRequired();
+                    return;
+                  }
+                  setSelectedLocker(locker);
+                  setView('deposit');
                   return;
                 }
-                setSelectedLocker(locker);
-                setView('deposit');
-                return;
-              }
-              if (locker.status === 'occupied' && userRole === 'receiver' && !locker.item?.otp) {
-                if (locker.item?.isLockedByOther) {
+                if (isCollectingThisLocker) {
+                  setSelectedLocker(locker);
+                  setView('collect');
                   return;
                 }
-                handleStartVerify(locker);
-              }
-            }}
-          >
-            {/* Header with locker number */}
-            <div className="flex items-start justify-between mb-2">
-              <span className="text-2xl font-semibold text-zinc-800 tracking-tight">
-                {String(locker.id).padStart(2, '0')}
-              </span>
-              {locker.status === 'occupied' ? (
-                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full border border-amber-300 bg-amber-50 text-amber-900">
-                  มีของ
+                if (locker.status === 'occupied' && userRole === 'receiver' && !locker.item?.otp) {
+                  if (locker.item?.isLockedByOther) {
+                    return;
+                  }
+                  handleStartVerify(locker);
+                }
+              }}
+            >
+              {/* Header with locker number */}
+              <div className="flex items-start justify-between mb-2">
+                <span className="text-xl sm:text-2xl font-bold text-zinc-800 tracking-tight">
+                  {String(locker.id).padStart(2, '0')}
                 </span>
-              ) : locker.status === 'available' ? (
-                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800">
-                  ว่าง
-                </span>
-              ) : (
-                <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-zinc-200 text-zinc-600">
-                  ปิดปรับปรุง
-                </span>
-              )}
-            </div>
+                {isCollectingThisLocker ? (
+                  <span className="text-[10px] sm:text-xs font-semibold px-2 sm:px-2.5 py-0.5 rounded-full border border-amber-400 bg-amber-100 text-amber-900 flex items-center gap-1 shadow-sm whitespace-nowrap">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse shrink-0" />
+                    กำลังรับของ
+                  </span>
+                ) : locker.status === 'occupied' ? (
+                  <span className="text-[10px] sm:text-xs font-semibold px-2 sm:px-2.5 py-0.5 rounded-full border border-amber-300 bg-amber-50 text-amber-900 whitespace-nowrap">
+                    มีของ
+                  </span>
+                ) : locker.status === 'available' ? (
+                  <span className="text-[10px] sm:text-xs font-semibold px-2 sm:px-2.5 py-0.5 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 whitespace-nowrap">
+                    ว่าง
+                  </span>
+                ) : (
+                  <span className="text-[10px] sm:text-xs font-medium px-2 sm:px-2.5 py-0.5 rounded-full bg-zinc-200 text-zinc-600 whitespace-nowrap">
+                    ปิดปรับปรุง
+                  </span>
+                )}
+              </div>
 
-            {/* Content */}
-            <div className="flex-1 flex flex-col justify-between">
-              {locker.status === 'available' && (
-                <div className="flex-1 flex flex-col items-center justify-center py-7">
-                  <div className={`p-3.5 rounded-2xl ${
-                    userRole === 'finder' 
-                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-600 group-hover:scale-110' 
-                      : 'bg-zinc-100 border border-zinc-200 text-zinc-400'
-                  } transition-transform`}>
-                    <Unlock className="w-8 h-8 stroke-[1.8]" />
+              {/* Content */}
+              <div className="flex-1 flex flex-col justify-between">
+                {locker.status === 'available' && (
+                  <div className="flex-1 flex flex-col items-center justify-center py-7">
+                    <div className={`p-3.5 rounded-2xl ${
+                      userRole === 'finder' 
+                        ? 'bg-emerald-50 border border-emerald-200 text-emerald-600 group-hover:scale-110' 
+                        : 'bg-zinc-100 border border-zinc-200 text-zinc-400'
+                    } transition-transform`}>
+                      <Unlock className="w-8 h-8 stroke-[1.8]" />
+                    </div>
+                    <p className="text-xs text-zinc-400 mt-4 text-center font-normal">
+                      {userRole === 'finder' ? 'แตะเพื่อฝากของ' : 'ไม่มีของ'}
+                    </p>
                   </div>
-                  <p className="text-xs text-zinc-400 mt-4 text-center font-normal">
-                    {userRole === 'finder' ? 'แตะเพื่อฝากของ' : 'ไม่มีของ'}
-                  </p>
-                </div>
-              )}
-              
-              {locker.status === 'occupied' && locker.item && (
-                <div className="flex-1 flex flex-col justify-between">
-                  {/* Item Info */}
-                  <div className="flex flex-col gap-2 mb-3">
-                    {/* Image - Clickable to expand */}
-                    <div 
-                      className="w-full h-24 rounded-2xl border border-zinc-200 overflow-hidden bg-zinc-100 cursor-pointer group relative"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (locker.item?.image) {
-                          setViewingImage({ src: locker.item.image, name: locker.item.name });
-                        }
-                      }}
-                    >
-                      {locker.item.image ? (
-                        <>
-                          <img 
-                            src={locker.item.image} 
-                            alt={locker.item.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                              (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                            }}
-                          />
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                            <span className="text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                              <Search className="w-3.5 h-3.5" />
-                              ดูรูปขยาย
-                            </span>
-                          </div>
-                        </>
-                      ) : null}
-                      <div className={`w-full h-full flex items-center justify-center ${locker.item.image ? 'hidden' : ''}`}>
-                        <ImageIcon className="w-8 h-8 text-zinc-400" />
+                )}
+                
+                {locker.status === 'occupied' && locker.item && (
+                  <div className="flex-1 flex flex-col justify-between">
+                    {/* Item Info */}
+                    <div className="flex flex-col gap-2 mb-3">
+                      {/* Image - Clickable to expand */}
+                      <div 
+                        className="w-full h-20 sm:h-24 rounded-xl sm:rounded-2xl border border-zinc-200 overflow-hidden bg-zinc-100 cursor-pointer group relative"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (locker.item?.image) {
+                            setViewingImage({ src: locker.item.image, name: locker.item.name });
+                          }
+                        }}
+                      >
+                        {locker.item.image ? (
+                          <>
+                            <img 
+                              src={locker.item.image} 
+                              alt={locker.item.name}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                                (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                              }}
+                            />
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                              <span className="text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                                <Search className="w-3.5 h-3.5" />
+                                ดูรูปขยาย
+                              </span>
+                            </div>
+                          </>
+                        ) : null}
+                        <div className={`w-full h-full flex items-center justify-center ${locker.item.image ? 'hidden' : ''}`}>
+                          <ImageIcon className="w-8 h-8 text-zinc-400" />
+                        </div>
+                      </div>
+                      {/* Item name */}
+                      <div>
+                        <p className="font-semibold text-sm text-zinc-900 truncate leading-snug">{locker.item.name}</p>
                       </div>
                     </div>
-                    {/* Item name */}
-                    <div>
-                      <p className="font-semibold text-sm text-zinc-900 truncate leading-snug">{locker.item.name}</p>
-                    </div>
-                  </div>
 
-                  {/* OTP Input Section - Only show if OTP is set AND in receiver mode */}
-                  {locker.item.otp && userRole === 'receiver' && (
-                    <div 
-                      className="bg-amber-50/70 border border-amber-200 rounded-2xl p-2.5 space-y-2 mt-auto"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-center justify-center gap-1 text-[7px] sm:text-[10px] md:text-xs text-amber-900 font-medium whitespace-nowrap text-center px-1 tracking-tight">
-                        <KeyRound className="w-2 h-2 sm:w-3 sm:h-3 shrink-0 text-amber-600" />
-                        <span>กรอกรหัส OTP {otpTimeLeft > 0 ? `(เหลือ ${formatTime(otpTimeLeft)})` : ''}</span>
-                      </div>
-                      <div className="space-y-1.5">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          autoComplete="one-time-code"
-                          placeholder="••••••"
-                          value={otpInputs[locker.id] || ''}
-                          onChange={(e) => handleOtpChange(locker.id, e.target.value)}
-                          onPaste={(e) => {
-                            const pasteData = e.clipboardData?.getData('text');
-                            if (pasteData) {
-                              const digits = pasteData.replace(/\D/g, '').slice(0, 6);
-                              if (digits) {
-                                setOtpInputs(prev => ({ ...prev, [locker.id]: digits }));
-                                setErrors(prev => ({ ...prev, [locker.id]: '' }));
-                              }
-                            }
-                          }}
-                          className={`w-full h-8 sm:h-9 px-2 rounded-xl text-center text-xs sm:text-sm font-semibold tracking-widest outline-none transition-all box-border ${
-                            errors[locker.id] 
-                              ? 'bg-rose-50 border border-rose-400 text-rose-700 placeholder:text-rose-400/50' 
-                              : 'bg-white border border-zinc-300 text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-900'
-                          }`}
-                        />
+                    {/* Action Section: Resume Pickup if already unlocked */}
+                    {isCollectingThisLocker ? (
+                      <div 
+                        className="bg-amber-50/90 border border-amber-300 rounded-2xl p-2 sm:p-2.5 space-y-1.5 sm:space-y-2 mt-auto shadow-sm"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-amber-900 py-0.5">
+                          <KeyRound className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>{otpTimeLeft > 0 ? `เหลือเวลา ${formatTime(otpTimeLeft)}` : 'พร้อมรับของ'}</span>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => handleUnlockLocker(locker)}
-                          disabled={unlocking === locker.id || (otpInputs[locker.id] || '').length !== 6}
-                          className="w-full h-8 sm:h-9 px-2 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 rounded-xl font-semibold flex items-center justify-center hover:shadow-md hover:shadow-amber-500/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed text-xs sm:text-sm cursor-pointer active:scale-[0.98] box-border"
+                          onClick={() => {
+                            setSelectedLocker(locker);
+                            setView('collect');
+                          }}
+                          className="w-full h-8 sm:h-9 px-3 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 rounded-xl font-bold flex items-center justify-center hover:shadow-md hover:shadow-amber-500/20 transition-all text-xs sm:text-sm cursor-pointer active:scale-[0.98]"
                         >
-                          {unlocking === locker.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-900" />
-                          ) : (
-                            <span>Unlock</span>
-                          )}
+                          <span>ดำเนินการต่อ</span>
                         </button>
                       </div>
-                      {errors[locker.id] && (
-                        <p className="text-[10px] text-rose-600 flex items-center justify-center gap-1 font-normal text-center">
-                          <AlertCircle className="w-2.5 h-2.5 shrink-0" />
-                          <span>{errors[locker.id]}</span>
-                        </p>
-                      )}
-                    </div>
-                  )}
+                    ) : locker.item.otp && userRole === 'receiver' ? (
+                      <div 
+                        className="bg-amber-50/70 border border-amber-200 rounded-2xl p-2 sm:p-2.5 space-y-2 mt-auto"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-center gap-1 text-[10px] sm:text-xs text-amber-900 font-medium whitespace-nowrap text-center px-1">
+                          <KeyRound className="w-3 h-3 shrink-0 text-amber-600" />
+                          <span>กรอกรหัส OTP {otpTimeLeft > 0 ? `(${formatTime(otpTimeLeft)})` : ''}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            placeholder="••••••"
+                            value={otpInputs[locker.id] || ''}
+                            onChange={(e) => handleOtpChange(locker.id, e.target.value)}
+                            onPaste={(e) => {
+                              const pasteData = e.clipboardData?.getData('text');
+                              if (pasteData) {
+                                const digits = pasteData.replace(/\D/g, '').slice(0, 6);
+                                if (digits) {
+                                  setOtpInputs(prev => ({ ...prev, [locker.id]: digits }));
+                                  setErrors(prev => ({ ...prev, [locker.id]: '' }));
+                                }
+                              }
+                            }}
+                            className={`w-full h-8 sm:h-9 px-2 rounded-xl text-center text-xs sm:text-sm font-semibold tracking-widest outline-none transition-all box-border ${
+                              errors[locker.id] 
+                                ? 'bg-rose-50 border border-rose-400 text-rose-700 placeholder:text-rose-400/50' 
+                                : 'bg-white border border-zinc-300 text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-900'
+                            }`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleUnlockLocker(locker)}
+                            disabled={unlocking === locker.id || (otpInputs[locker.id] || '').length !== 6}
+                            className="w-full h-8 sm:h-9 px-2 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 rounded-xl font-semibold flex items-center justify-center hover:shadow-md hover:shadow-amber-500/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed text-xs sm:text-sm cursor-pointer active:scale-[0.98] box-border"
+                          >
+                            {unlocking === locker.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-900" />
+                            ) : (
+                              <span>Unlock</span>
+                            )}
+                          </button>
+                        </div>
+                        {errors[locker.id] && (
+                          <p className="text-[10px] text-rose-600 flex items-center justify-center gap-1 font-normal text-center">
+                            <AlertCircle className="w-2.5 h-2.5 shrink-0" />
+                            <span>{errors[locker.id]}</span>
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
 
                   {/* Click to verify - Only show if no OTP */}
                   {!locker.item.otp && userRole === 'receiver' && (
@@ -1616,7 +1682,8 @@ const DashboardView = ({
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Image Lightbox Modal */}
@@ -2185,12 +2252,12 @@ const DepositView = ({
                 </h3>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <div className="flex items-center justify-center pt-2">
                 <button
                   type="button"
                   onClick={triggerUnlock}
                   disabled={cooldown > 0 || isUnlocking}
-                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[150px] sm:min-w-[170px] px-6 rounded-xl font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 hover:shadow-amber-400/25 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[160px] sm:min-w-[190px] px-8 rounded-xl font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 hover:shadow-amber-400/25 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed mx-auto"
                 >
                   {isUnlocking ? (
                     <>
@@ -2205,14 +2272,6 @@ const DepositView = ({
                   ) : (
                     <span>Unlock Again</span>
                   )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleCancelOrEdit}
-                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[150px] sm:min-w-[170px] px-6 rounded-xl font-medium text-xs sm:text-sm text-zinc-700 hover:text-zinc-950 bg-white hover:bg-zinc-50 border border-zinc-200/90 shadow-sm transition-all cursor-pointer flex items-center justify-center active:scale-[0.98]"
-                >
-                  แก้ไขข้อมูลสิ่งของ
                 </button>
               </div>
             </div>
@@ -2332,6 +2391,478 @@ const formatThaiDepositDateTime = (item?: LockerItem | null) => {
     return formatThaiDate(item.date) || item.date;
   }
   return formatThaiDate(new Date());
+};
+
+// =========================================================================
+// Collect / Pickup View Component (Interactive Multi-step Hardware-Synced Flow)
+// =========================================================================
+type CollectStep =
+  | 'waiting_door_open'      // 1. Solenoid pulsed, waiting for physical door open + "Unlock Again" button
+  | 'waiting_item_retrieval' // 2. Door is OPEN, waiting for item removal + manual fallback
+  | 'waiting_door_close'     // 3. Item removed, waiting for door to be closed
+  | 'committing'             // 3.5. Saving collected status to database
+  | 'success';               // 4. Complete! Summary & celebration screen
+
+const CollectView = ({
+  setView,
+  selectedLocker,
+  setSelectedLocker,
+  setLockers,
+  setOtp,
+  setOtpGeneratedAt,
+  setOtpTimeLeft,
+}: {
+  setView: (view: ViewType) => void;
+  selectedLocker: Locker | null;
+  setSelectedLocker: (locker: Locker | null) => void;
+  setLockers: React.Dispatch<React.SetStateAction<Locker[]>>;
+  setOtp: (otp: number) => void;
+  setOtpGeneratedAt: (date: Date | null) => void;
+  setOtpTimeLeft?: (time: number) => void;
+}) => {
+  const [step, setStep] = useState<CollectStep>('waiting_door_open');
+  const [hardwareDoorState, setHardwareDoorState] = useState<'OPEN' | 'CLOSED' | 'UNKNOWN'>('CLOSED');
+  const [hardwareHasItem, setHardwareHasItem] = useState<boolean>(true);
+  const [manualRetrievedConfirmed, setManualRetrievedConfirmed] = useState<boolean>(false);
+  const [cooldown, setCooldown] = useState<number>(4);
+  const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
+
+  // Preserve locker data in case parent's selectedLocker is refreshed/nulled during collection commit
+  const activeLockerRef = useRef<Locker | null>(selectedLocker);
+  if (selectedLocker && !activeLockerRef.current) {
+    activeLockerRef.current = selectedLocker;
+  }
+  const currentLocker = selectedLocker || activeLockerRef.current;
+
+  // Lock guard ref to prevent duplicate concurrent commits
+  const isCommittingRef = useRef(false);
+
+  // Cooldown countdown timer for Unlock debounce
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
+  // Subscribe to real-time locker hardware status from Supabase
+  useEffect(() => {
+    if (!currentLocker?.id) return;
+    const lockerId = currentLocker.id;
+
+    // Initial status fetch
+    supabase
+      .from('lockers')
+      .select('door_state, has_item')
+      .eq('id', lockerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          if (data.door_state) setHardwareDoorState(data.door_state as any);
+          if (typeof data.has_item === 'boolean') setHardwareHasItem(data.has_item);
+        }
+      });
+
+    // Realtime changes listener
+    const channel = supabase
+      .channel(`collect-hardware-sync-${lockerId}-${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'lockers',
+          filter: `id=eq.${lockerId}`,
+        },
+        (payload) => {
+          const row = payload.new as { door_state?: string; has_item?: boolean };
+          if (row.door_state) {
+            setHardwareDoorState(row.door_state as any);
+          }
+          if (typeof row.has_item === 'boolean') {
+            setHardwareHasItem(row.has_item);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentLocker?.id]);
+
+  // Complete collection by calling API to officially mark transaction collected in DB
+  const executeCompleteCollect = useCallback(async () => {
+    if (!currentLocker || isCommittingRef.current) return;
+    isCommittingRef.current = true;
+    setStep('committing');
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
+      const res = await fetch('/api/locker/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          lockerId: Number(currentLocker.id),
+          transactionId: currentLocker.item?.transactionId,
+          action: 'complete',
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.warn('Failed to complete collection via API:', data.error);
+      }
+
+      setStep('success');
+      toast.success('รับสิ่งของเรียบร้อยแล้ว!');
+    } catch (err) {
+      console.error('Error completing collection:', err);
+      setStep('success');
+    }
+  }, [currentLocker]);
+
+  // Reactive state machine driven by hardware status
+  useEffect(() => {
+    // 1. In waiting_door_open: Physical door opened -> proceed to waiting_item_retrieval
+    if (step === 'waiting_door_open' && hardwareDoorState === 'OPEN') {
+      setStep('waiting_item_retrieval');
+      toast.info('เปิดประตูตู้แล้ว กรุณานำสิ่งของออกจากช่องตู้');
+      return;
+    }
+
+    // 2. In waiting_item_retrieval: Item removed while door is still open -> proceed to waiting_door_close
+    if (step === 'waiting_item_retrieval' && (!hardwareHasItem || manualRetrievedConfirmed) && hardwareDoorState === 'OPEN') {
+      setStep('waiting_door_close');
+      toast.success('นำสิ่งของออกจากตู้แล้ว กรุณาปิดประตูตู้');
+      return;
+    }
+
+    // 3. In waiting_item_retrieval: Door was closed WITHOUT removing item -> return to waiting_door_open
+    if (step === 'waiting_item_retrieval' && hardwareDoorState === 'CLOSED' && hardwareHasItem && !manualRetrievedConfirmed) {
+      setManualRetrievedConfirmed(false);
+      setStep('waiting_door_open');
+      toast.warning('ปิดประตูตู้โดยยังไม่ได้นำสิ่งของออก');
+      return;
+    }
+
+    // 4. In waiting_item_retrieval: Fast action (Item removed AND door closed) -> proceed to complete collection
+    if (step === 'waiting_item_retrieval' && hardwareDoorState === 'CLOSED' && (!hardwareHasItem || manualRetrievedConfirmed)) {
+      executeCompleteCollect();
+      return;
+    }
+
+    // 5. In waiting_door_close: User puts item back while door is still open -> return to waiting_item_retrieval
+    if (step === 'waiting_door_close' && hardwareHasItem && !manualRetrievedConfirmed && hardwareDoorState === 'OPEN') {
+      setStep('waiting_item_retrieval');
+      toast.warning('พบสิ่งของกลับเข้ามาในตู้ กรุณานำสิ่งของออก');
+      return;
+    }
+
+    // 6. In waiting_door_close: Door closed -> complete collection!
+    if (step === 'waiting_door_close' && hardwareDoorState === 'CLOSED') {
+      if (!hardwareHasItem || manualRetrievedConfirmed) {
+        executeCompleteCollect();
+      } else {
+        setManualRetrievedConfirmed(false);
+        setStep('waiting_door_open');
+        toast.warning('ปิดประตูตู้โดยพบว่ายังมีสิ่งของอยู่ในตู้');
+      }
+      return;
+    }
+  }, [step, hardwareDoorState, hardwareHasItem, manualRetrievedConfirmed, executeCompleteCollect]);
+
+  // Trigger unlock command via API with debounce cooldown
+  const triggerUnlock = async () => {
+    if (!currentLocker?.id || cooldown > 0 || isUnlocking) return;
+    setIsUnlocking(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch('/api/locker/unlock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          lockerId: Number(currentLocker.id),
+          transactionId: currentLocker.item?.transactionId,
+          action: 'collect',
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'ไม่สามารถส่งคำสั่งปลดล็อกตู้ได้');
+      }
+
+      setCooldown(4);
+      toast.success('ส่งสัญญาณปลดล็อกตู้แล้ว');
+    } catch (err: any) {
+      toast.error(err.message || 'เกิดข้อผิดพลาดในการปลดล็อก');
+    } finally {
+      setIsUnlocking(false);
+    }
+  };
+
+  const handleFinishSuccess = () => {
+    if (currentLocker?.id) {
+      setLockers((prev) =>
+        prev.map((l) =>
+          l.id === currentLocker.id
+            ? { ...l, status: 'available' as const, item: null }
+            : l
+        )
+      );
+    }
+
+    try {
+      localStorage.removeItem('smart_locker_verified_session');
+      const key = getVerifyAttemptsKey(currentLocker);
+      if (key) localStorage.removeItem(key);
+    } catch {}
+
+    setOtp(0);
+    setOtpGeneratedAt(null);
+    setOtpTimeLeft?.(0);
+    setSelectedLocker(null);
+    setView('dashboard');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  if (!currentLocker && step !== 'success') {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-8 text-center animate-fade-in">
+        <p className="text-zinc-500 mb-4 font-normal text-sm">ไม่พบข้อมูลตู้ล็อกเกอร์</p>
+        <button
+          onClick={() => setView('dashboard')}
+          className="px-6 py-2.5 bg-zinc-900 text-white rounded-xl text-xs sm:text-sm font-semibold hover:bg-zinc-800 transition-colors cursor-pointer"
+        >
+          กลับสู่หน้าหลัก
+        </button>
+      </div>
+    );
+  }
+
+  // Active step numbering for breadcrumbs/indicator
+  const currentStepNum = 
+    step === 'waiting_door_open' ? 2 :
+    step === 'waiting_item_retrieval' ? 3 :
+    step === 'waiting_door_close' ? 4 : 5;
+
+  return (
+    <div className="max-w-2xl mx-auto px-3 sm:px-4 py-2.5 sm:py-6 animate-fade-in">
+      {/* Back button (only shown when not success) */}
+      {step !== 'success' && (
+        <button
+          onClick={() => setView('dashboard')}
+          className="mb-2 sm:mb-4 text-zinc-500 hover:text-zinc-800 flex items-center gap-1.5 text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span>Back to Dashboard</span>
+        </button>
+      )}
+
+      <div className="backdrop-blur-2xl bg-white/95 rounded-2xl sm:rounded-3xl p-4 sm:p-8 shadow-[0_20px_60px_rgba(0,0,0,0.08)] border border-zinc-200">
+        {/* Header Title */}
+        <div className="flex items-center justify-between mb-4 sm:mb-6 pb-2.5 sm:pb-4 border-b border-zinc-100">
+          <div>
+            <h2 className="text-lg sm:text-2xl font-bold tracking-tight text-zinc-900">รับของ</h2>
+            <p className="text-[11px] sm:text-sm text-zinc-500 mt-0.5 sm:mt-1 font-normal leading-relaxed">
+              ตู้หมายเลข <span className="font-semibold text-zinc-700">#{String(currentLocker?.id || '').padStart(2, '0')}</span>
+            </p>
+          </div>
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-zinc-900 flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
+            <KeyRound className="w-4 h-4 sm:w-6 sm:h-6 stroke-[2.2]" />
+          </div>
+        </div>
+
+        {/* Step Progress Bar */}
+        <div className="grid grid-cols-4 gap-1.5 sm:gap-2 mb-6 sm:mb-8">
+          {[
+            { num: 1, label: 'ยืนยัน OTP' },
+            { num: 2, label: 'เปิดตู้' },
+            { num: 3, label: 'รับสิ่งของ' },
+            { num: 4, label: 'ปิดตู้' },
+          ].map((s) => {
+            const isCompleted = currentStepNum > s.num;
+            const isCurrent = currentStepNum === s.num;
+            return (
+              <div key={s.num} className="space-y-1.5 text-center">
+                <span
+                  className={`text-[10px] sm:text-xs block font-medium truncate ${
+                    isCompleted
+                      ? 'text-amber-700 font-semibold'
+                      : isCurrent
+                      ? 'text-zinc-900 font-bold'
+                      : 'text-zinc-400'
+                  }`}
+                >
+                  {s.label}
+                </span>
+                <div
+                  className={`h-1.5 sm:h-2 rounded-full transition-all duration-300 ${
+                    isCompleted
+                      ? 'bg-gradient-to-r from-amber-400 to-yellow-500 shadow-sm shadow-amber-400/20'
+                      : isCurrent
+                      ? 'bg-amber-200'
+                      : 'bg-zinc-200'
+                  }`}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ================= STEP 2: WAITING FOR DOOR OPEN ================= */}
+        {step === 'waiting_door_open' && (
+          <div className="py-2 sm:py-4 animate-fade-in">
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl sm:rounded-3xl p-6 sm:p-10 text-center space-y-6">
+              <div className="relative inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-amber-100 text-amber-700 mx-auto shadow-inner">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-25 animate-ping" />
+                <Unlock className="w-8 h-8 sm:w-10 sm:h-10 relative z-10 text-amber-600" />
+              </div>
+
+              <div>
+                <h3 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight">
+                  กรุณาเปิดประตูตู้
+                </h3>
+              </div>
+
+              <div className="flex items-center justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={triggerUnlock}
+                  disabled={cooldown > 0 || isUnlocking}
+                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[160px] sm:min-w-[190px] px-8 rounded-xl font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 hover:shadow-amber-400/25 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed mx-auto"
+                >
+                  {isUnlocking ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>กำลังส่งคำสั่ง...</span>
+                    </>
+                  ) : cooldown > 0 ? (
+                    <>
+                      <RotateCw className="w-4 h-4 animate-spin" />
+                      <span>Unlock Again ({cooldown}s)</span>
+                    </>
+                  ) : (
+                    <span>Unlock Again</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 3: WAITING FOR ITEM RETRIEVAL ================= */}
+        {step === 'waiting_item_retrieval' && (
+          <div className="py-2 sm:py-4 animate-fade-in">
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl sm:rounded-3xl p-6 sm:p-10 text-center space-y-6">
+              <div className="relative inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-sky-100 text-sky-700 mx-auto shadow-inner">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-25 animate-ping" />
+                <Package className="w-8 h-8 sm:w-10 sm:h-10 relative z-10 text-sky-600" />
+              </div>
+
+              <div>
+                <h3 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight">
+                  กรุณานำสิ่งของออกจากช่องตู้
+                </h3>
+              </div>
+
+              {/* Manual fallback button */}
+              <div className="pt-4 border-t border-zinc-200/80 space-y-2.5 max-w-sm mx-auto">
+                <p className="text-xs text-zinc-500 font-normal">
+                  กรณีที่สิ่งของมีขนาดเล็ก
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualRetrievedConfirmed(true);
+                    toast.success('ยืนยันการนำสิ่งของออกเรียบร้อย');
+                  }}
+                  className="w-full sm:w-auto h-11 sm:h-12 min-w-[180px] sm:min-w-[210px] px-6 rounded-xl font-semibold text-xs sm:text-sm bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-200/90 shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 mx-auto active:scale-[0.98]"
+                >
+                  <CheckCircle className="w-4 h-4 text-emerald-600" />
+                  <span>นำสิ่งของออกเรียบร้อยแล้ว</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 4: WAITING FOR DOOR CLOSE ================= */}
+        {step === 'waiting_door_close' && (
+          <div className="py-2 sm:py-4 animate-fade-in">
+            <div className="bg-zinc-50/90 border border-zinc-200/90 rounded-2xl sm:rounded-3xl p-6 sm:p-10 text-center space-y-6">
+              <div className="relative inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-emerald-100 text-emerald-700 mx-auto shadow-inner">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-25 animate-ping" />
+                <CheckCircle className="w-8 h-8 sm:w-10 sm:h-10 relative z-10 text-emerald-600" />
+              </div>
+
+              <div>
+                <h3 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight leading-snug sm:leading-normal">
+                  <span className="block sm:inline">นำสิ่งของออกจากตู้แล้ว</span>
+                  <span className="hidden sm:inline"> </span>
+                  <span className="block sm:inline mt-1 sm:mt-0">กรุณาปิดประตูตู้</span>
+                </h3>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 4.5: COMMITTING COLLECTION ================= */}
+        {step === 'committing' && (
+          <div className="bg-white rounded-2xl p-8 sm:p-12 text-center space-y-4 border border-zinc-200 shadow-sm animate-fade-in">
+            <Loader2 className="w-12 h-12 animate-spin text-amber-500 mx-auto" />
+            <div className="space-y-1.5">
+              <h3 className="text-base sm:text-lg font-bold text-zinc-900">
+                กำลังบันทึกการรับของ...
+              </h3>
+              <p className="text-xs text-zinc-500">
+                กรุณารอสักครู่ ระบบกำลังอัปเดตสถานะตู้
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 5: SUCCESS CELEBRATION ================= */}
+        {step === 'success' && (
+          <div className="py-6 sm:py-10 animate-fade-in text-center space-y-6 sm:space-y-8 max-w-sm mx-auto">
+            <div className="inline-flex items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-emerald-100 text-emerald-600 mx-auto shadow-inner">
+              <CheckCircle className="w-12 h-12 sm:w-14 sm:h-14 text-emerald-600 stroke-[2.2]" />
+            </div>
+
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight">
+                รับของสำเร็จ
+              </h2>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleFinishSuccess}
+                className="w-full h-12 sm:h-13 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-zinc-950 font-bold rounded-xl shadow-lg shadow-amber-500/20 hover:shadow-amber-400/30 transition-all flex items-center justify-center text-sm sm:text-base cursor-pointer active:scale-[0.98]"
+              >
+                <span>กลับสู่หน้าหลัก</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 // Verify View Component (Luxury Light Mode)
@@ -3133,8 +3664,19 @@ const OtpView = ({
         return;
       }
 
-      setUnlocked(true);
-      toast.success('ปลดล็อกตู้สำเร็จ! ส่งคำสั่งเปิดตู้แล้ว');
+      try {
+        const raw = localStorage.getItem('smart_locker_verified_session');
+        const parsed = raw ? JSON.parse(raw) : {};
+        localStorage.setItem('smart_locker_verified_session', JSON.stringify({
+          ...parsed,
+          lockerId: selectedLocker?.id,
+          view: 'collect',
+          collectUnlocked: true,
+        }));
+      } catch {}
+
+      setView('collect');
+      toast.success('ปลดล็อกตู้สำเร็จ! กำลังเข้าสู่ขั้นตอนรับของ');
     } catch (err) {
       console.error('Error unlocking locker:', err);
       setError('เกิดข้อผิดพลาดในการปลดล็อกตู้');
@@ -3742,35 +4284,6 @@ const ChatListView = ({
   );
 };
 
-
-interface VerifiedLockerSession {
-  lockerId: number;
-  otp: number;
-  otpGeneratedAt: string;
-  userRole: 'receiver';
-  view: ViewType;
-  remaining: number;
-}
-
-const getActiveVerifiedSession = (): VerifiedLockerSession | null => {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem('smart_locker_verified_session');
-    if (!raw) return null;
-    const session = JSON.parse(raw);
-    if (!session || !session.otp || !session.otpGeneratedAt || !session.lockerId) return null;
-    const elapsed = Math.floor((Date.now() - new Date(session.otpGeneratedAt).getTime()) / 1000);
-    if (elapsed < 600) {
-      return { ...session, remaining: 600 - elapsed };
-    } else {
-      localStorage.removeItem('smart_locker_verified_session');
-      return null;
-    }
-  } catch {
-    return null;
-  }
-};
-
 // Main App Component Content
 function SmartLockerContent() {
   const { user, profile, loading: authLoading, refreshProfile } = useAuth();
@@ -3791,6 +4304,10 @@ function SmartLockerContent() {
     if (viewParam === 'profile') return 'profile';
     return (pathname.includes('/contact-admin') || searchParams?.get('chat') === 'true') ? 'chat' : 'home';
   });
+  const viewRef = useRef<ViewType>(view);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
   const [userRole, setUserRole] = useState<'finder' | 'receiver'>(() => {
     const tab = searchParams?.get('tab');
@@ -4100,6 +4617,57 @@ function SmartLockerContent() {
         }
         return locker;
       }));
+
+      // Handle active session or selected locker when collected (e.g. via physical keypad)
+      // IMPORTANT: Never clear selectedLocker or force-redirect if user is actively in 'collect' or 'deposit' flow!
+      if (viewRef.current !== 'collect' && viewRef.current !== 'deposit') {
+        setSelectedLocker(prevSelected => {
+          // Never clear selectedLocker if user is in deposit flow or locker is available
+          if (!prevSelected || !prevSelected.item) {
+            return prevSelected;
+          }
+
+          // Only clear if this occupied locker's transaction was collected
+          if (!latestByLocker[prevSelected.id]) {
+            const currentSess = getActiveVerifiedSession();
+            if (currentSess && currentSess.lockerId === prevSelected.id) {
+              try {
+                localStorage.removeItem('smart_locker_verified_session');
+              } catch {}
+              setOtp(0);
+              setOtpGeneratedAt(null);
+              setOtpTimeLeft(0);
+              setView(v => {
+                if (v === 'otp_display' || v === 'otp' || v === 'verify') {
+                  toast.success(`ตู้หมายเลข #${String(prevSelected.id).padStart(2, '0')} รับสิ่งของเรียบร้อยแล้ว`);
+                  return 'dashboard';
+                }
+                return v;
+              });
+            }
+            return null;
+          }
+          return prevSelected;
+        });
+
+        // Also check if active session exists for a collected locker
+        const activeSess = getActiveVerifiedSession();
+        if (activeSess && !latestByLocker[activeSess.lockerId]) {
+          try {
+            localStorage.removeItem('smart_locker_verified_session');
+          } catch {}
+          setOtp(0);
+          setOtpGeneratedAt(null);
+          setOtpTimeLeft(0);
+          setView(v => {
+            if (v === 'otp_display' || v === 'otp' || v === 'verify') {
+              toast.success(`ตู้หมายเลข #${String(activeSess.lockerId).padStart(2, '0')} รับสิ่งของเรียบร้อยแล้ว`);
+              return 'dashboard';
+            }
+            return v;
+          });
+        }
+      }
     };
 
     syncLockersWithDB();
@@ -4112,6 +4680,17 @@ function SmartLockerContent() {
           event: '*',
           schema: 'public',
           table: 'locker_transactions'
+        },
+        () => {
+          syncLockersWithDB();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'lockers'
         },
         () => {
           syncLockersWithDB();
@@ -4505,6 +5084,18 @@ function SmartLockerContent() {
           profile={profile}
           user={user}
           setLockers={setLockers}
+        />
+      )}
+      
+      {view === 'collect' && (
+        <CollectView
+          setView={setView}
+          selectedLocker={selectedLocker}
+          setSelectedLocker={setSelectedLocker}
+          setLockers={setLockers}
+          setOtp={setOtp}
+          setOtpGeneratedAt={setOtpGeneratedAt}
+          setOtpTimeLeft={setOtpTimeLeft}
         />
       )}
       
